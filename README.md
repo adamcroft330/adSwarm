@@ -47,7 +47,16 @@ For the native CUDA training path:
 For local standalone rendering builds, `build.sh` downloads the matching Raylib
 release automatically.
 
-## Quick Start
+## Training Options
+
+You can run Stage 1 training either locally or on RunPod:
+
+- Use the quick start path if you are setting up and running training on your
+  own local machine.
+- Use the RunPod Stage 1 workflow if you want to launch the same training run
+  on a fresh RunPod CUDA development pod.
+
+## Quick Start: Local Training
 
 Create an environment, install the package, and build one Ocean environment:
 
