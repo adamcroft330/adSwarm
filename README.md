@@ -1,18 +1,202 @@
-![figure](https://pufferai.github.io/source/resource/header.png)
+# Stirling Drone Puffer
 
-[![Discord](https://dcbadge.vercel.app/api/server/spT4huaGYV?style=plastic)](https://discord.gg/spT4huaGYV)
-[![Twitter](https://img.shields.io/twitter/url/https/twitter.com/cloudposse.svg?style=social&label=Follow%20%40jsuarez)](https://twitter.com/jsuarez)
+Stirling Drone Puffer is a working reinforcement-learning sandbox for the
+Stirling autonomous drone-swarm project. It is based on PufferLib 4.0 and its
+Ocean environments, with the current project work focused on reproducing and
+extending the native `drone` environment before moving toward multi-drone
+formation racing.
 
-PufferLib is a fast and sane reinforcement learning library that can train tiny, super-human models in seconds. The included learning algorithm, hyperparameter tuning, and simulation methods are the product of our own research. All our tools are free and open source. Need a high performance environment for your application? We build them professionally and offer training + extended support. Contact jsuarez🐡puffer🐡ai.
+The repository contains:
 
-All of our documentation is hosted at [puffer.ai](https://puffer.ai "PufferLib Documentation"). @jsuarez5341 on [Discord](https://discord.gg/puffer) for support. Post there before opening issues. We're always looking for new contributors!
+- A Python package, `pufferlib`, with the PuffeRL trainer and command-line
+  interface.
+- Native C/CUDA training backends and environment bindings under `src/` and
+  `ocean/`.
+- The Ocean environment collection, including `drone`, `craftax`, `breakout`,
+  `nmmo3`, `drive`, `impulse_wars`, and many smaller benchmark games.
+- Stirling-specific planning documents and RunPod workflow scripts under
+  `stirling/`.
+- Tests and parity checks for kernels, encoders, sweep logic, and selected
+  environments.
 
-## Star to puff up the project!
+## Project Status
 
-<a href="https://star-history.com/#pufferai/pufferlib&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=pufferai/pufferlib&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=pufferai/pufferlib&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=pufferai/pufferlib&type=Date" />
- </picture>
-</a>
+The current Stirling workflow is Stage 1: reproduce the unmodified PufferLib
+Ocean `drone` HOVER baseline and record reference metrics. This provides the
+regression target for later changes to platform constants, action interfaces,
+observations, rewards, multi-agent formation behavior, and sim-to-real work.
+
+Project planning lives in:
+
+- `stirling/docs/drone_project_docs_v0_5.md`
+- `stirling/docs/rl_pipelines_doc_v0_2.md`
+- `stirling/docs/requirements_doc_v0_3.md`
+- `stirling/docs/stage1_handoff.md`
+
+## Requirements
+
+For the native CUDA training path:
+
+- Python 3.10+
+- PyTorch with CUDA support
+- CUDA toolkit with `nvcc`
+- cuDNN and NCCL, either system-installed or available through the NVIDIA
+  Python wheels used by your PyTorch install
+- `clang`, OpenMP, and optionally `ccache`
+
+For local standalone rendering builds, `build.sh` downloads the matching Raylib
+release automatically.
+
+## Quick Start
+
+Create an environment, install the package, and build one Ocean environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip wheel
+python -m pip install -e .
+
+bash build.sh drone
+python -c "import pufferlib, pufferlib._C; print('import OK')"
+```
+
+Train the drone baseline:
+
+```bash
+puffer train drone
+```
+
+Or use the Stirling Stage 1 wrapper:
+
+```bash
+bash stirling/scripts/train_stage1.sh
+```
+
+Checkpoints are written under `checkpoints/drone/<run_id>/`. Logs are written
+under `logs/drone/`.
+
+## RunPod Stage 1 Workflow
+
+On a fresh RunPod PyTorch CUDA development image:
+
+```bash
+git clone <repo-url> stirling-drone-puffer
+cd stirling-drone-puffer
+bash stirling/scripts/runpod_setup.sh
+bash stirling/scripts/train_stage1.sh
+```
+
+To enable Weights & Biases logging:
+
+```bash
+export WANDB_API_KEY=<your-key>
+bash stirling/scripts/train_stage1.sh
+```
+
+The setup script installs native build dependencies, installs this package in
+editable mode, builds the `drone` CUDA backend, and verifies that
+`pufferlib._C` imports.
+
+## Building Environments
+
+`build.sh` compiles one environment at a time into `pufferlib/_C...so`. The
+trainer checks that the compiled backend matches the environment name.
+
+Common builds:
+
+```bash
+bash build.sh drone             # CUDA training backend
+bash build.sh drone --float     # float32 precision
+bash build.sh drone --cpu       # CPU fallback
+bash build.sh drone --debug     # debug build
+bash build.sh drone --local     # local standalone executable
+bash build.sh drone --fast      # optimized standalone executable
+bash build.sh drone --web       # Emscripten web build
+bash build.sh all               # build all Ocean envs, default and float
+```
+
+If you switch from `drone` to another environment, rebuild first:
+
+```bash
+bash build.sh breakout
+puffer train breakout
+```
+
+## Useful Commands
+
+Run the main tests:
+
+```bash
+pytest tests
+```
+
+Run a quick import/performance smoke test:
+
+```bash
+python tests/test_import_performance.py
+```
+
+Render or experiment with examples:
+
+```bash
+python examples/render.py
+python examples/pufferl.py
+```
+
+Run a hyperparameter sweep:
+
+```bash
+puffer sweep drone
+```
+
+## Repository Layout
+
+```text
+config/      Environment and training configuration files
+examples/    Small Python examples for trainer, vectorization, and wrappers
+ocean/       C environments and Python bindings used by PufferLib Ocean
+pufferlib/   Python package and CLI entry point
+resources/   Weights, textures, maps, sprites, and render assets
+src/         Shared CUDA/C++ trainer, model, tensor, and binding code
+stirling/    Drone-swarm project docs, scripts, and Stage 1 artifacts
+tests/       Unit, parity, convergence, and kernel tests
+vendor/      Vendored C headers and small support libraries
+```
+
+## Configuration
+
+Training defaults are loaded from `config/default.ini` and then overridden by
+the selected environment config, such as `config/drone.ini`. Most values can be
+overridden from the CLI with dotted arguments:
+
+```bash
+puffer train drone \
+  --train.total-timesteps 10000000 \
+  --train.learning-rate 0.003 \
+  --env.num-drones 64
+```
+
+The current `drone` config sets the HOVER task, 2,048 total agents, 64 drones
+per environment instance, one GPU, and a 40M-step Stage 1 run.
+
+## Notes for Development
+
+- `pufferlib._C` is generated by `build.sh`; rebuild after changing C/CUDA
+  environment code or switching environment targets.
+- The native backend is intentionally specialized to the selected environment
+  for speed.
+- RunPod pod disks are ephemeral. Copy checkpoints and logs you care about
+  before terminating the pod.
+- The Stirling documents are part of the working design record. Update them
+  when project decisions change, especially around the drone action interface,
+  formation task, and validation criteria.
+
+## Upstream
+
+This project is based on PufferLib, a fast reinforcement-learning library and
+environment suite by Puffer AI.
+
+- Documentation: https://puffer.ai
+- Upstream project: https://github.com/pufferai/pufferlib
+- License: MIT, see `LICENSE`
