@@ -19,6 +19,10 @@ Stage 1 baseline training has been run successfully on RunPod.
 The pod disk is ephemeral. Copy the checkpoint off the pod before terminating it
 if it has not already been copied.
 
+For local macOS visual evaluation after copying a checkpoint, see
+`stirling/docs/macos_eval.md`. The macOS path is eval/dev-loop only; Stage 1
+training remains the RunPod/CUDA workflow documented here.
+
 ## Objective
 
 Stage 1 baseline replication trains the unmodified PufferLib 4.0 Ocean `drone`
