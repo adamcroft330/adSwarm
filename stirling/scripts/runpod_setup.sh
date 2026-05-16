@@ -23,16 +23,32 @@ fi
 nvcc --version | tail -1
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
-# --- 2. Install PufferLib (editable) ----------------------------------------
+# --- 2. Install native build dependencies -----------------------------------
+# RunPod containers are ephemeral. The PyTorch image has CUDA + torch, but not
+# the C/CUDA build helpers used by build.sh drone.
+if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y clang libomp-dev ccache
+else
+    for tool in clang ccache; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "ERROR: $tool not found and apt-get is unavailable."
+            exit 1
+        fi
+    done
+fi
+
+# --- 3. Install PufferLib (editable) ----------------------------------------
 # RunPod PyTorch images already ship torch + CUDA libs; this adds the rest.
 python -m pip install --upgrade pip wheel
 python -m pip install -e .
 
-# --- 3. Build the drone env (native CUDA backend) ---------------------------
+# --- 4. Build the drone env (native CUDA backend) ---------------------------
 bash build.sh drone
 python -c "import pufferlib, pufferlib._C; print('pufferlib + _C import OK')"
 
-# --- 4. wandb (optional) ----------------------------------------------------
+# --- 5. wandb (optional) ----------------------------------------------------
 if [ -n "${WANDB_API_KEY:-}" ]; then
     wandb login "$WANDB_API_KEY"
     echo "wandb: logged in"
