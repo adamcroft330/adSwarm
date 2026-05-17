@@ -90,7 +90,7 @@ under `logs/drone/`.
 On a fresh RunPod PyTorch CUDA development image:
 
 ```bash
-git clone <repo-url> stirling-drone-puffer
+git clone https://github.com/adamcroft330/adSwarm stirling-drone-puffer
 cd stirling-drone-puffer
 bash stirling/scripts/runpod_setup.sh
 bash stirling/scripts/train_stage1.sh
