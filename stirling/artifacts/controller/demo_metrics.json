@@ -1,0 +1,27 @@
+{
+  "reform_time_after_kick_s": 1.2899999999999991,
+  "worst_formation_error_post_kick_m": 0.7639196518858739,
+  "min_separation_overall_m": 0.48829737692219566,
+  "min_separation_post_kick_m": 0.48829737692219566,
+  "mode_transition_settle_s": {
+    "t=5s->line": 0.5800000000000001,
+    "t=8s->box": 0.5899999999999999,
+    "t=11s->stack": 1.6799999999999997,
+    "t=14s->box": 1.67,
+    "t=17s->compressed": 0.0,
+    "t=20s->box": 0.0,
+    "t=23s->diamond": 0.40000000000000213,
+    "t=26s->box": 0.41000000000000014
+  },
+  "targets": {
+    "reform_s": 2.0,
+    "min_sep_m": 0.4
+  },
+  "matlab_draft_reference": {
+    "reform_s": 0.6,
+    "min_sep_m": 0.54,
+    "worst_err_m": 0.49
+  },
+  "reform_threshold_m": 0.15,
+  "pass": true
+}
