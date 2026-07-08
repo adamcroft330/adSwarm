@@ -162,16 +162,13 @@ criterion: residual policy measurably improves on the 3a benchmark.
 
 - `rl_pipeline_doc_v0_3.md` §2.3–2.5, §3, §7 (this repo, `stirling/docs/`)
 - `drone_project_docs_v0_6.md` §8 (classical controller), §4 (formation
-  architecture) — not yet in this repo, see note below
-- `requirements_doc_v0_4.md` NFR-34–37 — not yet in this repo, see note below
+  architecture) — this repo, `stirling/docs/`
+- `requirements_doc_v0_4.md` NFR-34–37 — this repo, `stirling/docs/`
 - `ocean/drone/dronelib.h`, `tasks.h`, `drone.h` (current upstream-identical
   state)
 
-**Note:** this repo's `stirling/docs/` still carries v0.5/v0.2/v0.3 of the
-project docs (one revision behind). The June revision — classical
-controller draft, sensor suite, VIO selection, formation reframing,
-residual RL formalisation — isn't reflected here yet. Worth syncing
-`drone_project_docs_v0_6.md` and `requirements_doc_v0_4.md` into this
-folder alongside the existing `rl_pipelines_doc_v0_2.md` → this plan already
-assumes v0.3 of the RL pipeline doc, which lags behind v0.6/v0.4. Flagging
-rather than doing it here since it wasn't asked for.
+**Note:** `stirling/docs/` now carries the June revisions in markdown —
+tech doc v0.6, requirements v0.4, and RL pipeline v0.3 — with the
+superseded v0.5/v0.3/v0.2 docs removed. The classical controller draft
+(§8) has since been reconstructed and validated in MuJoCo; see
+`stirling/controller/`.

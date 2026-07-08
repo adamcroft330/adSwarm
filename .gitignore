@@ -172,3 +172,6 @@ pufferlib/ocean/impulse_wars/benchmark/
 resources/drive/data/*
 resources/drive/binaries/*
 
+
+# Stirling: regenerable render artifacts (produced by demo/eval scripts)
+stirling/artifacts/**/*.mp4
