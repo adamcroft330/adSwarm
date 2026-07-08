@@ -19,6 +19,10 @@ Stage 1 baseline training has been run successfully on RunPod.
 The pod disk is ephemeral. Copy the checkpoint off the pod before terminating it
 if it has not already been copied.
 
+For local macOS visual evaluation after copying a checkpoint, see
+`stirling/docs/macos_eval.md`. The macOS path is eval/dev-loop only; Stage 1
+training remains the RunPod/CUDA workflow documented here.
+
 ## Objective
 
 Stage 1 baseline replication trains the unmodified PufferLib 4.0 Ocean `drone`
@@ -62,6 +66,60 @@ Completion audit evidence:
   - `0000000039387136.bin`
   - `0000000039976960.bin`
 
+## 2026-05-17 Repeat Run
+
+The baseline was rerun on RunPod and followed by an optimized short repeat.
+
+- Pod id: `wabj62go2ch81f`
+- GPU: NVIDIA GeForce RTX 4090, 24564 MiB
+- Image: `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`
+- Repo on pod: `/root/adSwarm`
+- Branch/commit trained: `stirling-drone` / `5a88a98`
+- Pod status after artifact copy: `EXITED`
+- Local artifacts:
+  - `stirling/artifacts/stage1/runpod_20260517/stage1_baseline_20260517T105523Z.log`
+  - `stirling/artifacts/stage1/runpod_20260517/0000000039976960.bin`
+  - `stirling/artifacts/stage1/runpod_20260517/stage1_fast_20260517T105842Z.log`
+  - `stirling/artifacts/stage1/runpod_20260517/0000000009961472.bin`
+
+Baseline repeat final values:
+
+| Metric | Value |
+| --- | ---: |
+| Steps | `40.0M` |
+| SPS | `2.4M` |
+| GPU | `81%` |
+| VRAM | `0.9/24G` |
+| score | `839.450` |
+| episode_return | `56.549` |
+| episode_length | `1013.617` |
+| ema_dist | `0.041` |
+| ema_vel | `0.089` |
+| ema_omega | `0.259` |
+
+Optimized fast repeat:
+
+- Mode: `STAGE1_MODE=fast STAGE1_SKIP_SETUP=1`
+- CLI overrides:
+  - `--train.total-timesteps 10000000`
+  - `--vec.total-agents 4096`
+  - `--train.minibatch-size 16384`
+
+| Metric | Value |
+| --- | ---: |
+| Steps | `10.0M` |
+| SPS | `4.2M` |
+| GPU | `80%` |
+| VRAM | `1.0/24G` |
+| score | `339.059` |
+| episode_return | `12.987` |
+| episode_length | `1020.349` |
+| ema_dist | `0.257` |
+| ema_vel | `0.487` |
+| ema_omega | `1.529` |
+
+The fast repeat is a throughput/timing run, not a converged baseline.
+
 ## Exact Replication Steps
 
 These steps reproduce the successful run on a fresh RunPod secure-cloud pod.
@@ -73,17 +131,23 @@ Use a secure-cloud pod. Community-cloud pods were unreliable during bring-up.
 Recommended RunPod settings:
 
 - `cloudType`: `SECURE`
-- `imageName`: `runpod/pytorch:1.0.3-cu1290-torch291-ubuntu2204`
+- `imageName`: `runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04`
 - `gpuCount`: `1`
 - `containerDiskInGb`: `30`
 - `volumeInGb`: `0`
 - `ports`: `["8888/http", "22/tcp"]`
 - `supportPublicIp`: `true`
-- `gpuTypeIds`: broad list such as RTX 5090, RTX 4090, RTX A6000, RTX A5000,
+- `gpuTypeIds`: broad list such as RTX 4090, RTX A6000, RTX A5000,
   L40, A100 80GB PCIe
 
-The successful pod used an RTX 5090. The image already had CUDA 12.9, Torch
-2.9.1, `nvcc`, `git`, and `/usr/local/bin/python`.
+The first successful pod used the older
+`runpod/pytorch:1.0.3-cu1290-torch291-ubuntu2204` image on an RTX 5090. Later
+570-driver hosts exposed `nvidia-smi` but failed Torch CUDA initialization with
+error 804 (`forward compatibility was attempted on non supported HW`) when using
+that CUDA 12.9 image. Treat `torch.cuda.is_available()` as the gate, not
+`nvidia-smi` alone. The local launcher now defaults to RunPod's official PyTorch
+2.8 + CUDA 12.8 image and `runpod_setup.sh` preserves the image's Torch build
+instead of letting editable install upgrade it.
 
 ### 2. Connect over RunPod proxy SSH
 
@@ -187,9 +251,76 @@ nohup setsid bash /root/build_and_train.sh > /root/build_and_train.log 2>&1 &
 echo "BUILD_TRAIN_PID:$!"
 ```
 
+The repo now also has a reusable pod-side wrapper for the same flow:
+
+```bash
+STAGE1_DETACH=1 bash stirling/scripts/runpod_stage1_once.sh
+```
+
+If the pod is already provisioned and reachable over RunPod proxy SSH, the
+local one-command launcher can clone/update the repo, run setup, and start
+detached training:
+
+```bash
+bash stirling/scripts/runpod_ssh_stage1.sh <POD_HOST>
+```
+
+`<POD_HOST>` is the host id before `@ssh.runpod.io`, for example
+`ixeoab1aw1v46m-6441200e`.
+
 This run was executed without W&B because proxy-SSH command echoing made secret
 injection unsafe. `~/.wandb_key` was validated beforehand against W&B, but the
 key was not placed on the pod.
+
+### 6b. Optimized repeat/timing run
+
+For training new models, use the full training wrapper rather than `fast` mode:
+
+```bash
+RUNPOD_API_KEY_FILE=~/.runpod_key bash stirling/scripts/train_hover_runpod.sh
+```
+
+The wrapper creates a pod, waits for training to finish, copies the log and
+newest checkpoint into `stirling/artifacts/stage1/<run-tag>/`, and stops the pod.
+Use these common overrides:
+
+```bash
+STAGE1_TAG=my-hover-model \
+STAGE1_TOTAL_TIMESTEPS=40000000 \
+RUNPOD_API_KEY_FILE=~/.runpod_key \
+bash stirling/scripts/train_hover_runpod.sh
+```
+
+Optional training overrides:
+
+- `STAGE1_TOTAL_TIMESTEPS`
+- `STAGE1_TOTAL_AGENTS`
+- `STAGE1_MINIBATCH_SIZE`
+- `STAGE1_EXTRA_ARGS`
+
+After the full baseline has been replicated, use fast mode only for a shorter
+smoke/timing run when the goal is to compare setup/build/training throughput:
+
+```bash
+STAGE1_MODE=fast bash stirling/scripts/runpod_ssh_stage1.sh <POD_HOST>
+```
+
+Fast mode keeps `task=1` (HOVER) and the native CUDA backend, but passes CLI
+overrides instead of changing `config/drone.ini`:
+
+- `--train.total-timesteps ${STAGE1_FAST_TIMESTEPS:-10000000}`
+- `--vec.total-agents ${STAGE1_FAST_TOTAL_AGENTS:-4096}`
+- `--train.minibatch-size ${STAGE1_FAST_MINIBATCH_SIZE:-16384}`
+
+Override those environment variables locally if a pod/GPU needs different
+batch sizing.
+
+When repeating on the same pod after a successful setup/build, skip that work:
+
+```bash
+RUNPOD_POD_ID=<POD_ID> STAGE1_MODE=fast STAGE1_SKIP_SETUP=1 \
+  bash stirling/scripts/runpod_stage1_local.sh
+```
 
 ### 7. Monitor progress
 

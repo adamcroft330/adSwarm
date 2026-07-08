@@ -87,13 +87,48 @@ under `logs/drone/`.
 
 ## RunPod Stage 1 Workflow
 
-On a fresh RunPod PyTorch CUDA development image:
+For repeatable full HOVER training on RunPod, use the single-command launcher:
 
 ```bash
-git clone <repo-url> stirling-drone-puffer
+RUNPOD_API_KEY_FILE=~/.runpod_key bash stirling/scripts/train_hover_runpod.sh
+```
+
+By default it creates a pod, waits for the run to finish, copies the log and
+newest checkpoint under `stirling/artifacts/stage1/<run-tag>/`, and stops the
+pod.
+
+Common overrides:
+
+```bash
+STAGE1_TAG=my-hover-model \
+STAGE1_TOTAL_TIMESTEPS=40000000 \
+RUNPOD_API_KEY_FILE=~/.runpod_key \
+bash stirling/scripts/train_hover_runpod.sh
+```
+
+For manual use on a fresh RunPod PyTorch CUDA development image:
+
+```bash
+git clone https://github.com/adamcroft330/adSwarm stirling-drone-puffer
 cd stirling-drone-puffer
 bash stirling/scripts/runpod_setup.sh
 bash stirling/scripts/train_stage1.sh
+```
+
+Or launch the create/wait/clone/setup/build/train sequence from your local
+machine in one command:
+
+```bash
+RUNPOD_API_KEY_FILE=~/.runpod_key STAGE1_MODE=train \
+  RUNPOD_WAIT=1 RUNPOD_COPY_ARTIFACTS=1 RUNPOD_STOP_ON_DONE=1 \
+  bash stirling/scripts/runpod_stage1_local.sh
+```
+
+For a shorter smoke/timing run that keeps the HOVER task and native CUDA path:
+
+```bash
+RUNPOD_POD_ID=<pod-id> STAGE1_MODE=fast STAGE1_SKIP_SETUP=1 \
+  RUNPOD_API_KEY_FILE=~/.runpod_key bash stirling/scripts/runpod_stage1_local.sh
 ```
 
 To enable Weights & Biases logging:

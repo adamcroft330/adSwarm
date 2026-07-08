@@ -1,0 +1,951 @@
+stage1 mode: fast
+repo: /root/adSwarm
+commit: 5a88a98
+started: Sun May 17 10:58:42 UTC 2026
+setup: skipped (STAGE1_SKIP_SETUP=1)
+pufferlib + _C import OK
+training args: --tag stage1-hover-fast --train.total-timesteps 10000000 --vec.total-agents 4096 --train.minibatch-size 16384
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0 🐡                 GPU: 0%      VRAM: 0.8/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate     0ms   0%    Losses            Value  │
+│  Env              drone      GPU        0ms   0%    policy            0.010  │
+│  Params          151.0K      Env        0ms   0%    value             0.003  │
+│  Steps              0.0    Train      165ms  99%    entropy           5.673  │
+│  SPS                0.0      Misc      17ms  10%    total             0.022  │
+│  Epoch                0      Forwa…   148ms  89%    old_kl            0.001  │
+│  Uptime             0ms                             kl                0.001  │
+│  Remaini…   A hair past                             clipfrac          0.091  │
+│               a freckle                                                      │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0          🐡       GPU: 83%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   247ms  39%    Losses            Value  │
+│  Env              drone      GPU       35ms   5%    policy           -0.037  │
+│  Params          151.0K      Env      201ms  32%    value             0.033  │
+│  Steps             2.6M    Train      373ms  60%    entropy           5.636  │
+│  SPS               4.2M      Misc      27ms   4%    total             0.111  │
+│  Epoch               20      Forwa…   346ms  55%    old_kl            0.001  │
+│  Uptime           629ms                             kl                0.001  │
+│  Remaini…   0d 0h 0m 1s                             clipfrac          0.119  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.000    score                         0.021  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           1.000  │
+│  timeout                       0.000    episode_return               -4.631  │
+│  episode_length              112.128    ema_dist                      2.730  │
+│  ema_vel                       3.756    ema_omega                    13.694  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0         🐡        GPU: 83%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   240ms  39%    Losses            Value  │
+│  Env              drone      GPU       33ms   5%    policy           -0.039  │
+│  Params          151.0K      Env      198ms  32%    value             0.008  │
+│  Steps             5.2M    Train      373ms  60%    entropy           5.419  │
+│  SPS               4.2M      Misc      27ms   4%    total            -0.003  │
+│  Epoch               40      Forwa…   346ms  56%    old_kl            0.005  │
+│  Uptime     0d 0h 0m 1s                             kl                0.005  │
+│  Remaini…   0d 0h 0m 1s                             clipfrac          0.350  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.000    score                         0.027  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           1.000  │
+│  timeout                       0.000    episode_return               -3.338  │
+│  episode_length              144.480    ema_dist                      2.928  │
+│  ema_vel                       4.330    ema_omega                     7.300  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0        🐡         GPU: 76%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   243ms  39%    Losses            Value  │
+│  Env              drone      GPU       33ms   5%    policy            0.019  │
+│  Params          151.0K      Env      198ms  32%    value             0.002  │
+│  Steps             7.9M    Train      373ms  60%    entropy           5.085  │
+│  SPS               4.2M      Misc      27ms   4%    total             0.028  │
+│  Epoch               60      Forwa…   346ms  56%    old_kl            0.007  │
+│  Uptime     0d 0h 0m 1s                             kl                0.007  │
+│  Remaini…         507ms                             clipfrac          0.441  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.000    score                         0.059  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           1.000  │
+│  timeout                       0.000    episode_return               -2.492  │
+│  episode_length              221.109    ema_dist                      3.130  │
+│  ema_vel                       4.751    ema_omega                     3.578  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0       🐡          GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.400    score                       121.823  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.080  │
+│  timeout                       0.920    episode_return                5.564  │
+│  episode_length              980.588    ema_dist                      0.663  │
+│  ema_vel                       1.065    ema_omega                     1.818  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0      🐡           GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.521    score                       183.042  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.007  │
+│  timeout                       0.993    episode_return                8.031  │
+│  episode_length             1018.112    ema_dist                      0.336  │
+│  ema_vel                       0.553    ema_omega                     1.538  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0     🐡            GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.529    score                       193.384  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return                8.383  │
+│  episode_length             1019.539    ema_dist                      0.315  │
+│  ema_vel                       0.525    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0    🐡             GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.533    score                       200.934  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                8.619  │
+│  episode_length             1020.990    ema_dist                      0.299  │
+│  ema_vel                       0.513    ema_omega                     1.529  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0   🐡              GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.534    score                       209.460  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                8.881  │
+│  episode_length             1020.980    ema_dist                      0.293  │
+│  ema_vel                       0.509    ema_omega                     1.528  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0  🐡               GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.534    score                       216.461  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                9.102  │
+│  episode_length             1020.924    ema_dist                      0.288  │
+│  ema_vel                       0.505    ema_omega                     1.528  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0 🐡                GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       223.063  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.003  │
+│  timeout                       0.997    episode_return                9.317  │
+│  episode_length             1021.353    ema_dist                      0.283  │
+│  ema_vel                       0.500    ema_omega                     1.527  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0          🐡       GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.534    score                       227.381  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                9.441  │
+│  episode_length             1020.661    ema_dist                      0.284  │
+│  ema_vel                       0.503    ema_omega                     1.529  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0         🐡        GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.534    score                       230.772  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                9.551  │
+│  episode_length             1020.425    ema_dist                      0.282  │
+│  ema_vel                       0.504    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0        🐡         GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       234.259  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return                9.657  │
+│  episode_length             1020.200    ema_dist                      0.282  │
+│  ema_vel                       0.504    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0       🐡          GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       236.836  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                9.741  │
+│  episode_length             1020.323    ema_dist                      0.280  │
+│  ema_vel                       0.502    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0      🐡           GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       238.793  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return                9.803  │
+│  episode_length             1020.404    ema_dist                      0.279  │
+│  ema_vel                       0.502    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0     🐡            GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       241.583  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return                9.879  │
+│  episode_length             1019.799    ema_dist                      0.281  │
+│  ema_vel                       0.504    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0    🐡             GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       246.826  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.038  │
+│  episode_length             1020.002    ema_dist                      0.279  │
+│  ema_vel                       0.502    ema_omega                     1.529  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0   🐡              GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       252.341  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.199  │
+│  episode_length             1019.489    ema_dist                      0.279  │
+│  ema_vel                       0.505    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0  🐡               GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.535    score                       257.095  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.349  │
+│  episode_length             1019.683    ema_dist                      0.277  │
+│  ema_vel                       0.503    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0 🐡                GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       260.324  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.445  │
+│  episode_length             1019.799    ema_dist                      0.276  │
+│  ema_vel                       0.501    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0          🐡       GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       262.400  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.516  │
+│  episode_length             1019.870    ema_dist                      0.275  │
+│  ema_vel                       0.500    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0         🐡        GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       264.143  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.571  │
+│  episode_length             1019.926    ema_dist                      0.274  │
+│  ema_vel                       0.500    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0        🐡         GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       264.873  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.590  │
+│  episode_length             1019.656    ema_dist                      0.275  │
+│  ema_vel                       0.501    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0       🐡          GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       265.380  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.610  │
+│  episode_length             1019.677    ema_dist                      0.275  │
+│  ema_vel                       0.501    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0      🐡           GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       265.631  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.619  │
+│  episode_length             1019.685    ema_dist                      0.275  │
+│  ema_vel                       0.501    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0     🐡            GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       265.787  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.622  │
+│  episode_length             1019.688    ema_dist                      0.275  │
+│  ema_vel                       0.501    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0    🐡             GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       265.889  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.625  │
+│  episode_length             1019.691    ema_dist                      0.275  │
+│  ema_vel                       0.501    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0   🐡              GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       266.830  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.654  │
+│  episode_length             1019.722    ema_dist                      0.274  │
+│  ema_vel                       0.501    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0  🐡               GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       268.953  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.721  │
+│  episode_length             1019.786    ema_dist                      0.274  │
+│  ema_vel                       0.500    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0 🐡                GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       272.234  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.826  │
+│  episode_length             1019.898    ema_dist                      0.273  │
+│  ema_vel                       0.500    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0          🐡       GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       276.965  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               10.975  │
+│  episode_length             1020.033    ema_dist                      0.271  │
+│  ema_vel                       0.498    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0         🐡        GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.536    score                       284.014  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.005  │
+│  timeout                       0.995    episode_return               11.206  │
+│  episode_length             1020.241    ema_dist                      0.269  │
+│  ema_vel                       0.496    ema_omega                     1.531  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0        🐡         GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.537    score                       291.602  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               11.459  │
+│  episode_length             1020.481    ema_dist                      0.267  │
+│  ema_vel                       0.492    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0       🐡          GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.537    score                       299.439  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               11.710  │
+│  episode_length             1020.727    ema_dist                      0.264  │
+│  ema_vel                       0.490    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0      🐡           GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.537    score                       307.249  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               11.965  │
+│  episode_length             1020.754    ema_dist                      0.263  │
+│  ema_vel                       0.490    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0     🐡            GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.538    score                       313.891  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.181  │
+│  episode_length             1020.775    ema_dist                      0.261  │
+│  ema_vel                       0.488    ema_omega                     1.530  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0    🐡             GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.538    score                       319.929  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.374  │
+│  episode_length             1020.986    ema_dist                      0.259  │
+│  ema_vel                       0.485    ema_omega                     1.528  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0   🐡              GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.538    score                       325.011  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.531  │
+│  episode_length             1020.797    ema_dist                      0.259  │
+│  ema_vel                       0.486    ema_omega                     1.529  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0  🐡               GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.538    score                       329.304  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.668  │
+│  episode_length             1020.644    ema_dist                      0.259  │
+│  ema_vel                       0.486    ema_omega                     1.528  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0 🐡                GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.539    score                       333.403  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.800  │
+│  episode_length             1020.660    ema_dist                      0.258  │
+│  ema_vel                       0.486    ema_omega                     1.528  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0          🐡       GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.539    score                       336.519  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.905  │
+│  episode_length             1020.513    ema_dist                      0.257  │
+│  ema_vel                       0.486    ema_omega                     1.528  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0         🐡        GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.539    score                       339.059  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.987  │
+│  episode_length             1020.349    ema_dist                      0.257  │
+│  ema_vel                       0.487    ema_omega                     1.529  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+[0;0H╭──────────────────────────────────────────────────────────────────────────────╮
+│  PufferLib 4.0        🐡         GPU: 80%      VRAM: 1.0/24G      RAM: 0.9G  │
+│                                                                              │
+│  Summary          Value    Evaluate   190ms  38%    Losses            Value  │
+│  Env              drone      GPU       26ms   5%    policy            0.015  │
+│  Params          151.0K      Env      157ms  32%    value             0.003  │
+│  Steps            10.0M    Train      299ms  61%    entropy           4.812  │
+│  SPS               4.2M      Misc      22ms   4%    total             0.027  │
+│  Epoch               76      Forwa…   277ms  56%    old_kl            0.001  │
+│  Uptime     0d 0h 0m 2s                             kl                0.001  │
+│  Remaini…           9ms                             clipfrac          0.158  │
+│                                                                              │
+│  User Stats                    Value    User Stats                    Value  │
+│  perf                          0.539    score                       339.059  │
+│  rings_passed                  0.000    ring_collisions               0.000  │
+│  collisions                    0.000    oob                           0.004  │
+│  timeout                       0.996    episode_return               12.987  │
+│  episode_length             1020.349    ema_dist                      0.257  │
+│  ema_vel                       0.487    ema_omega                     1.529  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Detected continuous action space with 4 dimensions
+Num workers: 1
+Num workers: 1
+Num workers: 1
+Num workers: 1
+Num workers: 1
+Num workers: 1
+Num workers: 1
+Num workers: 1
+
+== training finished ==
+Checkpoints: checkpoints/drone/<run_id>/
+Record the final dashboard frame (hover_score, hover_ema, ema_dist,
+ema_vel, ema_omega, episode_return, episode_length, total steps,
+wall-clock, steady-state SPS) and report them back to capture the
+Stage 1 baseline. Copy the latest checkpoint off the pod before
+terminating it (pod disk is ephemeral).
+finished: Sun May 17 10:58:47 UTC 2026
+checkpoints/drone/1779015330380/0000000000065536.bin 604176 bytes
+checkpoints/drone/1779015330380/0000000013172736.bin 604176 bytes
+checkpoints/drone/1779015330380/0000000026279936.bin 604176 bytes
+checkpoints/drone/1779015330380/0000000039387136.bin 604176 bytes
+checkpoints/drone/1779015330380/0000000039976960.bin 604176 bytes
+checkpoints/drone/1779015523446/0000000000131072.bin 604176 bytes
+checkpoints/drone/1779015523446/0000000009961472.bin 604176 bytes
