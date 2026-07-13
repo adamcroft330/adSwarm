@@ -46,12 +46,16 @@ Two checkpoint files land in `stirling/artifacts/drone/<tag>/`:
 
 ```bash
 source .venv-macos-eval/bin/activate
-puffer eval drone --slowly --load-model-path stirling/artifacts/drone/<tag>/<step>.pt
+KMP_DUPLICATE_LIB_OK=TRUE puffer eval drone --slowly \
+    --load-model-path stirling/artifacts/drone/<tag>/<step>.pt
 ```
 
 (`--slowly` selects the PyTorch backend, which renders via Raylib and loads
-torch checkpoints on CPU. To convert an older native `.bin` by hand:
-`python stirling/scripts/convert_native_checkpoint.py <path>.bin`.)
+torch checkpoints on CPU. `KMP_DUPLICATE_LIB_OK=TRUE` is needed on macOS
+because torch bundles its own libomp while the local `_C` build links brew's
+— without it the process aborts with OMP Error #15. To convert an older
+native `.bin` by hand: `python stirling/scripts/convert_native_checkpoint.py
+<path>.bin`.)
 
 ## How it works
 
