@@ -37,12 +37,21 @@ modal run stirling/modal/train_drone.py --tag rw-sweep \
 Flags: `--timesteps`, `--agents`, `--tag`, `--gpu` (A10G/L4/A100/H100),
 `--extra "<puffer args>"`, `--wandb`.
 
-The checkpoint lands at `stirling/artifacts/drone/<tag>/<step>.bin`. Eval it
-on your Mac:
+Two checkpoint files land in `stirling/artifacts/drone/<tag>/`:
+
+- `<step>.bin` — the native flat-float32 checkpoint the CUDA backend trains
+  and saves. Only the native backend can load it.
+- `<step>.pt` — the same weights converted to a torch state_dict (losslessly,
+  on the GPU right after training). This is the one you eval on a Mac:
 
 ```bash
-bash stirling/scripts/eval_stage1_macos.sh stirling/artifacts/drone/<tag>/<step>.bin
+source .venv-macos-eval/bin/activate
+puffer eval drone --slowly --load-model-path stirling/artifacts/drone/<tag>/<step>.pt
 ```
+
+(`--slowly` selects the PyTorch backend, which renders via Raylib and loads
+torch checkpoints on CPU. To convert an older native `.bin` by hand:
+`python stirling/scripts/convert_native_checkpoint.py <path>.bin`.)
 
 ## How it works
 
@@ -52,9 +61,15 @@ bash stirling/scripts/eval_stage1_macos.sh stirling/artifacts/drone/<tag>/<step>
   Volume keyed by a hash of the C/CUDA sources — change the env code and the
   next run recompiles; otherwise runs start in seconds. ccache is persisted
   too, so even a recompile is fast.
-- **Checkpoint returned inline.** The ~600 KB `.bin` is returned by the
-  function and written locally by the entrypoint, and also mirrored to a
-  `stirling-drone-checkpoints` Volume as a durable backup.
+- **Checkpoints returned inline.** The ~600 KB `.bin` and its `.pt`
+  conversion are returned by the function and written locally by the
+  entrypoint, and also mirrored to a `stirling-drone-checkpoints` Volume as
+  a durable backup.
+- **Native speed, Mac eval.** Training stays on the fast native CUDA
+  backend; `stirling/scripts/convert_native_checkpoint.py` maps its flat
+  weight dump onto the torch policy's state_dict (the layouts match
+  one-to-one; torch-only biases are zeroed, which is the identical
+  function), so `puffer eval drone --slowly` works on a Mac with no GPU.
 - **Experiments are args, not rebuilds.** Reward weights, task, timesteps,
   agent count, etc. are `puffer` CLI overrides passed through `--extra`, so
   they never trigger a recompile.

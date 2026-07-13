@@ -37,7 +37,12 @@ import time
 
 import modal
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+# REPO_ROOT is only used locally (to build the image and to write the returned
+# checkpoint back to the repo). Modal re-imports this module *inside the
+# container*, where the file lives at /root/train_drone.py and has no 3rd parent
+# — so guard the index to keep that remote import from crashing.
+_HERE = pathlib.Path(__file__).resolve()
+REPO_ROOT = _HERE.parents[2] if len(_HERE.parents) > 2 else _HERE.parent
 REMOTE_ROOT = "/root/adSwarm"
 
 # --- Container image ---------------------------------------------------------
@@ -48,9 +53,14 @@ image = (
     modal.Image.from_registry(
         "nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04", add_python="3.11"
     )
+    # NB: libnccl2 / libnccl-dev are already present (and apt-held at the
+    # CUDA-matched version) in the cudnn-devel base image, so we must NOT list
+    # them here — apt refuses to touch held packages without
+    # --allow-change-held-packages, which failed the build. The held libs give
+    # build.sh both nccl.h and the unversioned libnccl.so its `-lnccl` needs.
     .apt_install(
         "clang", "libomp-dev", "ccache", "git", "build-essential",
-        "libnccl2", "libnccl-dev", "curl", "unzip",
+        "curl", "unzip",
     )
     .pip_install("torch>=2.9", index_url="https://download.pytorch.org/whl/cu128")
     .pip_install(
@@ -65,6 +75,9 @@ image = (
             ".git/**", ".venv*/**", "checkpoints/**", "wandb/**",
             "**/__pycache__/**", "stirling/artifacts/**", "build/**",
             "*.mp4", "*.so", "*.o", "*.a",
+            # macOS touches .DS_Store during the build; Modal aborts if any
+            # source file changes mid-build, so keep them out entirely.
+            "**/.DS_Store", ".DS_Store",
         ],
     )
     .workdir(REMOTE_ROOT)
@@ -117,8 +130,15 @@ def _ensure_backend():
     env = os.environ.copy()
     env["NVCC_ARCH"] = "native"          # a real GPU is attached at runtime
     env["CCACHE_DIR"] = os.path.join(BUILD_DIR, "ccache")
+    # ccache's temp dir defaults to $CCACHE_DIR/tmp, which lives on the Modal
+    # Volume — and Volumes don't support the hardlink ccache uses there
+    # ("Operation not permitted"). Keep the persistent cache on the Volume but
+    # put the transient temp files on the container-local fs, and don't hardlink.
+    env["CCACHE_TEMPDIR"] = "/tmp/ccache-tmp"
+    env["CCACHE_NOHARDLINK"] = "1"
     env["PYTHON"] = "python"
     os.makedirs(env["CCACHE_DIR"], exist_ok=True)
+    os.makedirs(env["CCACHE_TEMPDIR"], exist_ok=True)
     subprocess.run(["bash", "build.sh", "drone"], cwd=REMOTE_ROOT, env=env, check=True)
 
     built = glob.glob(os.path.join(REMOTE_ROOT, "pufferlib", "_C*.so"))
@@ -179,15 +199,27 @@ def train(timesteps=None, agents=None, tag="drone", extra="", wandb_enabled=Fals
     newest = max(bins, key=os.path.getmtime)
     name = os.path.basename(newest)
 
+    # Convert the native flat checkpoint to a torch state_dict (.pt) so it can
+    # be evaled on a Mac with `puffer eval drone --slowly` — the native format
+    # is only loadable by the CUDA backend. Lossless; see the converter script.
+    subprocess.run(
+        ["python", "stirling/scripts/convert_native_checkpoint.py", newest],
+        cwd=REMOTE_ROOT, check=True,
+    )
+    pt_path = newest[: -len(".bin")] + ".pt"
+
     # Persist to the checkpoints Volume as a durable backup.
     dst_dir = os.path.join(CKPT_DIR, tag)
     os.makedirs(dst_dir, exist_ok=True)
     shutil.copy(newest, os.path.join(dst_dir, name))
+    shutil.copy(pt_path, os.path.join(dst_dir, os.path.basename(pt_path)))
     checkpoints.commit()
 
     data = pathlib.Path(newest).read_bytes()
+    pt_data = pathlib.Path(pt_path).read_bytes()
     print(f"[train] done in {dt:.0f}s — checkpoint {name} ({len(data)//1024} KB)", flush=True)
-    return {"filename": name, "bytes": data, "tag": tag, "seconds": dt}
+    return {"filename": name, "bytes": data, "pt_filename": os.path.basename(pt_path),
+            "pt_bytes": pt_data, "tag": tag, "seconds": dt}
 
 
 @app.local_entrypoint()
@@ -206,8 +238,12 @@ def main(timesteps: int = None, agents: int = None, tag: str = "drone",
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / result["filename"]
     out_path.write_bytes(result["bytes"])
+    pt_path = out_dir / result["pt_filename"]
+    pt_path.write_bytes(result["pt_bytes"])
 
-    rel = out_path.relative_to(REPO_ROOT)
+    rel_bin = out_path.relative_to(REPO_ROOT)
+    rel_pt = pt_path.relative_to(REPO_ROOT)
     print(f"\n✅ trained in {result['seconds']:.0f}s on {gpu}")
-    print(f"   checkpoint saved: {rel}")
-    print(f"   eval locally:     bash stirling/scripts/eval_stage1_macos.sh {rel}")
+    print(f"   native checkpoint: {rel_bin}")
+    print(f"   torch checkpoint:  {rel_pt}")
+    print(f"   eval on this Mac:  puffer eval drone --slowly --load-model-path {rel_pt}")

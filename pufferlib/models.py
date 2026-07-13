@@ -106,6 +106,11 @@ class MinGRU(nn.Module):
     # https://arxiv.org/abs/2410.01201v1
     def __init__(self, hidden_size, num_layers=1, **kwargs):
         super().__init__()
+        # Sweep-tuned configs store num_layers as a float (e.g. 3.80354). The
+        # native C backend truncates it to an int when building the network, so
+        # the torch path must match — otherwise `range()` raises and, worse, a
+        # mismatched layer count won't line up with the flat weight checkpoint.
+        num_layers = int(num_layers)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.layers = nn.ModuleList([
@@ -154,6 +159,11 @@ class MinGRU(nn.Module):
 class LSTM(nn.Module):
     def __init__(self, hidden_size, num_layers=1, **kwargs):
         super().__init__()
+        # Sweep-tuned configs store num_layers as a float (e.g. 3.80354). The
+        # native C backend truncates it to an int when building the network, so
+        # the torch path must match — otherwise `range()` raises and, worse, a
+        # mismatched layer count won't line up with the flat weight checkpoint.
+        num_layers = int(num_layers)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 
@@ -198,6 +208,11 @@ class LSTM(nn.Module):
 class GRU(nn.Module):
     def __init__(self, hidden_size, num_layers=1, **kwargs):
         super().__init__()
+        # Sweep-tuned configs store num_layers as a float (e.g. 3.80354). The
+        # native C backend truncates it to an int when building the network, so
+        # the torch path must match — otherwise `range()` raises and, worse, a
+        # mismatched layer count won't line up with the flat weight checkpoint.
+        num_layers = int(num_layers)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 

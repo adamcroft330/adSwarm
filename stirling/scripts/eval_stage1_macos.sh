@@ -10,8 +10,9 @@ if [ $# -ne 1 ]; then
     echo "Expected checkpoint example:"
     echo "  stirling/artifacts/stage1/0000000039976960.bin"
     echo
-    echo "The Stage 1 checkpoint is not committed to this repo. Copy a compatible"
-    echo "PyTorch .bin checkpoint from RunPod, then rerun this command."
+    echo "The Stage 1 checkpoint is not committed to this repo. Train one with"
+    echo "'modal run stirling/modal/train_drone.py' (produces a .pt), or convert"
+    echo "a native .bin via stirling/scripts/convert_native_checkpoint.py."
     echo
     echo "For a no-checkpoint smoke test, run:"
     echo "  puffer eval drone --slowly"
