@@ -345,6 +345,19 @@ elif [ "$MODE" = "cpu" ]; then
         -o "$OUTPUT"
     )
     "${LINK_CMD[@]}"
+
+    # macOS: if this Python's torch bundles libomp, retarget our extension to
+    # that copy so the process only ever loads ONE OpenMP runtime. Linking
+    # brew's libomp alongside torch's segfaults inside libomp worker threads
+    # (KMP_DUPLICATE_LIB_OK=TRUE merely delays the crash).
+    if [ "$(uname)" = "Darwin" ] && [ -n "$OMP_PREFIX" ]; then
+        TORCH_OMP=$("$PYTHON" -c "import torch, os; p = os.path.join(os.path.dirname(torch.__file__), 'lib', 'libomp.dylib'); print(p if os.path.exists(p) else '')" 2>/dev/null || echo "")
+        if [ -n "$TORCH_OMP" ]; then
+            install_name_tool -change "$OMP_PREFIX/lib/libomp.dylib" "$TORCH_OMP" "$OUTPUT"
+            codesign -f -s - "$OUTPUT"
+            echo "Retargeted libomp -> torch's bundled copy (single OpenMP runtime)"
+        fi
+    fi
     echo "Built: $OUTPUT"
 
 elif [ "$MODE" = "profile" ]; then
