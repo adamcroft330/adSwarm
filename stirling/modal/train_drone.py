@@ -108,13 +108,20 @@ def _source_hash() -> str:
     return h.hexdigest()[:16]
 
 
-def _ensure_backend():
-    """Compile pufferlib._C for the drone env, or restore it from the cache."""
+def _ensure_backend(float32=True):
+    """Compile pufferlib._C for the drone env, or restore it from the cache.
+
+    float32=True (default) builds with --float (fp32). We default to fp32 because
+    a bf16-trained policy only evals correctly in bf16, and the Mac/torch eval
+    path is fp32-only — so a bf16 checkpoint looks great on Modal (native bf16)
+    yet falls apart on the Mac. float32=False builds bf16 (faster training, but
+    Modal-bf16-eval only)."""
     import glob
     import shutil
 
     src_hash = _source_hash()
-    cached = os.path.join(BUILD_DIR, f"_C_{src_hash}.so")
+    suffix = "_f32" if float32 else ""
+    cached = os.path.join(BUILD_DIR, f"_C_{src_hash}{suffix}.so")
 
     # The extension filename (e.g. _C.cpython-311-x86_64-linux-gnu.so).
     import sysconfig
@@ -139,7 +146,8 @@ def _ensure_backend():
     env["PYTHON"] = "python"
     os.makedirs(env["CCACHE_DIR"], exist_ok=True)
     os.makedirs(env["CCACHE_TEMPDIR"], exist_ok=True)
-    subprocess.run(["bash", "build.sh", "drone"], cwd=REMOTE_ROOT, env=env, check=True)
+    cmd = ["bash", "build.sh", "drone"] + (["--float"] if float32 else [])
+    subprocess.run(cmd, cwd=REMOTE_ROOT, env=env, check=True)
 
     built = glob.glob(os.path.join(REMOTE_ROOT, "pufferlib", "_C*.so"))
     if not built:
@@ -155,13 +163,14 @@ def _ensure_backend():
     volumes={BUILD_DIR: build_cache, CKPT_DIR: checkpoints},
     timeout=3600,
 )
-def train(timesteps=None, agents=None, tag="drone", extra="", wandb_enabled=False):
+def train(timesteps=None, agents=None, tag="drone", extra="", wandb_enabled=False,
+          float32=True):
     """Run one training job and return the newest checkpoint as bytes."""
     import glob
     import shlex
     import shutil
 
-    _ensure_backend()
+    _ensure_backend(float32=float32)
 
     # Verify the backend imports before spending GPU time on a doomed run.
     subprocess.run(
@@ -224,14 +233,21 @@ def train(timesteps=None, agents=None, tag="drone", extra="", wandb_enabled=Fals
 
 @app.local_entrypoint()
 def main(timesteps: int = None, agents: int = None, tag: str = "drone",
-         gpu: str = "A10G", extra: str = "", wandb: bool = False):
-    """Train on Modal and drop the checkpoint into stirling/artifacts/drone/<tag>/."""
+         gpu: str = "A10G", extra: str = "", wandb: bool = False, bf16: bool = False):
+    """Train on Modal and drop the checkpoint into stirling/artifacts/drone/<tag>/.
+
+    Trains in fp32 by default so the checkpoint evals correctly on the fp32-only
+    Mac/torch path. Pass --bf16 for faster training when you'll only eval on
+    Modal (native bf16); a bf16 checkpoint does NOT eval correctly on the Mac.
+    """
+    float32 = not bf16
     # The W&B secret is only attached (and thus only required) when --wandb is set.
     opts = {"gpu": gpu}
     if wandb:
         opts["secrets"] = [modal.Secret.from_name("stirling-wandb")]
     result = train.with_options(**opts).remote(
         timesteps=timesteps, agents=agents, tag=tag, extra=extra, wandb_enabled=wandb,
+        float32=float32,
     )
 
     out_dir = REPO_ROOT / "stirling" / "artifacts" / "drone" / tag
@@ -243,7 +259,10 @@ def main(timesteps: int = None, agents: int = None, tag: str = "drone",
 
     rel_bin = out_path.relative_to(REPO_ROOT)
     rel_pt = pt_path.relative_to(REPO_ROOT)
-    print(f"\n✅ trained in {result['seconds']:.0f}s on {gpu}")
+    print(f"\n✅ trained in {result['seconds']:.0f}s on {gpu} ({'bf16' if bf16 else 'fp32'})")
     print(f"   native checkpoint: {rel_bin}")
     print(f"   torch checkpoint:  {rel_pt}")
-    print(f"   eval on this Mac:  puffer eval drone --slowly --load-model-path {rel_pt}")
+    if bf16:
+        print("   ⚠️  bf16 policy — eval on Modal only; it will NOT hover on the fp32 Mac path")
+    else:
+        print(f"   eval on this Mac:  puffer eval drone --slowly --load-model-path {rel_pt}")

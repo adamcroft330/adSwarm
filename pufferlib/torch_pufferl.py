@@ -171,6 +171,11 @@ class PuffeRL:
         )
 
         self.args = args
+        # When False (set by eval()), the recurrent hidden state must persist
+        # across rollouts() calls instead of being zeroed each call — otherwise
+        # eval (horizon=1) resets the MinGRU every step and runs the policy
+        # statelessly. Matches the native backend's reset_state semantics.
+        self.reset_state = args.get('reset_state', True)
         self.config = config
         self.world_size = args['world_size']
         self.epoch = 0
@@ -206,7 +211,11 @@ class PuffeRL:
         device = self.device
         horizon = config['horizon']
 
-        self.state = tuple(torch.zeros_like(s) for s in self.state) if self.state else ()
+        if self.reset_state:
+            # Training: fresh hidden state at the start of each BPTT segment.
+            self.state = tuple(torch.zeros_like(s) for s in self.state) if self.state else ()
+        elif not self.state:
+            self.state = self.policy.initial_state(self.total_agents, device)
         o = self.vec_obs
         r = torch.zeros(self.total_agents, device=device)
         d = torch.zeros(self.total_agents, device=device)
@@ -241,6 +250,11 @@ class PuffeRL:
                 self._vec.cpu_step(actions_flat.data_ptr())
 
             o, r, d = self.vec_obs, self.vec_rewards, self.vec_terminals
+            if not self.reset_state and self.state:
+                # Zero the hidden state only for agents whose episode just ended,
+                # so the next step starts fresh (mirrors native reset_agent).
+                keep = (1.0 - d.float()).view(1, -1, 1)
+                self.state = tuple(s * keep for s in self.state)
             prof.mark(3)
             prof.elapsed(P.EVAL_GPU, 1, 2)
             prof.elapsed(P.EVAL_ENV, 2, 3)

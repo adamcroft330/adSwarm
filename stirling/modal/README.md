@@ -29,13 +29,16 @@ modal run stirling/modal/train_drone.py --timesteps 2000000 --tag smoke
 # Pick a GPU and log to W&B
 modal run stirling/modal/train_drone.py --gpu L4 --wandb
 
+# Faster bf16 training — ONLY if you'll eval on Modal, not the Mac (see Precision)
+modal run stirling/modal/train_drone.py --tag fast-exp --bf16
+
 # Arbitrary experiment overrides (any puffer arg via --extra)
 modal run stirling/modal/train_drone.py --tag rw-sweep \
     --extra "--env.alpha-dist 1.5 --env.alpha-omega 0.005"
 ```
 
 Flags: `--timesteps`, `--agents`, `--tag`, `--gpu` (A10G/L4/A100/H100),
-`--extra "<puffer args>"`, `--wandb`.
+`--extra "<puffer args>"`, `--wandb`, `--bf16` (see [Precision](#precision)).
 
 Two checkpoint files land in `stirling/artifacts/drone/<tag>/`:
 
@@ -58,6 +61,34 @@ was built before build.sh learned to retarget libomp to torch's bundled copy
 — rebuild it: `CC=/opt/homebrew/opt/llvm/bin/clang bash build.sh drone --cpu`.
 Do **not** work around it with `KMP_DUPLICATE_LIB_OK=TRUE`; two OpenMP
 runtimes in one process segfault sooner or later.
+
+## Precision
+
+**Training defaults to fp32, on purpose.** The native CUDA backend can train in
+either bf16 (faster) or fp32, but the Mac/torch eval path (`--slowly`) is
+**fp32-only**. A bf16-trained policy — at least this recurrent hover controller
+— does **not** transfer to fp32: it hovers under bf16 but destabilises within
+~100 steps under fp32. So a bf16 checkpoint looks perfect when rendered on Modal
+(native bf16) yet falls apart on the Mac, with *identical weights*. That is not
+a conversion bug — native-fp32 and torch-fp32 agree to 3 decimals; the policy is
+simply numerically fragile across precisions.
+
+To keep "trains on Modal, evals on the Mac" honest, training and the native
+eval/video default to **fp32**. Only pass `--bf16` if you'll eval exclusively on
+Modal (and then render with `modal run stirling/modal/eval_video.py --tag <t>
+--bf16` so the native renderer matches). For a model this small (~151K params,
+600 KB) fp32 costs nothing at inference and is *more* portable; the only cost is
+~40% slower training (e.g. 40M steps: 32s bf16 vs 45s fp32 — trivial here).
+
+Sanity-check any checkpoint's hover quality on the GPU without a display:
+
+```bash
+modal run stirling/modal/eval_video.py::metrics --tag <tag>   # native vs torch, both fp32
+```
+
+Good hover ≈ `ema_dist` near `hover_dist` (0.1) with full-length episodes
+(~1000); a broken/precision-mismatched policy shows `ema_dist` ~2.5 and episodes
+dying at ~100 steps.
 
 ## How it works
 
