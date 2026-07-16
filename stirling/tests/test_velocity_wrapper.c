@@ -295,6 +295,27 @@ static int test_formation_reform(float k_mot_override, int quiet) {
 
 // --- Task (c) tests: the FORMATION task -------------------------------------
 
+// Test 7a: TASK_NAMES tracks the DroneTask enum by position, and the numeric
+// task ids the configs use are what we think they are. Nothing in the compiler
+// ties the name table to the enum, so a reorder can silently remap tasks --
+// config/drone.ini selects by integer.
+static int test_task_enum_names(void) {
+    int ok = 1;
+    for (int t = 0; t < TASK_N; t++) {
+        if (get_task((char*)TASK_NAMES[t]) != (DroneTask)t) {
+            printf("[task enum] TASK_NAMES[%d]=\"%s\" round-trips to %d  -> FAIL\n", t,
+                   TASK_NAMES[t], (int)get_task((char*)TASK_NAMES[t]));
+            ok = 0;
+        }
+    }
+    // The two ids that are load-bearing outside this file.
+    if (HOVER != 1) { printf("[task enum] HOVER=%d, config default expects 1  -> FAIL\n", HOVER); ok = 0; }
+    if (FORMATION != 2) { printf("[task enum] FORMATION=%d, expected 2  -> FAIL\n", FORMATION); ok = 0; }
+    printf("[task enum] %d tasks round-trip; hover=%d formation=%d  -> %s\n", TASK_N, HOVER,
+           FORMATION, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 static int vec3_close(Vec3 a, Vec3 b, float eps) {
     return norm3(sub3(a, b)) < eps;
 }
@@ -606,6 +627,7 @@ int main(int argc, char** argv) {
     pass &= test_formation_reform(0.0f, 0); // NFR-36 gate at the shipped k_mot
 
     printf("--- task (c): FORMATION task ---\n");
+    pass &= test_task_enum_names();
     pass &= test_formation_geometry();
     pass &= test_formation_blend();
     pass &= test_formation_feedforward_consistency();

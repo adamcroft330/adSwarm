@@ -66,9 +66,22 @@ Stage 3a benchmark config) and real neighbours at 4 (Stage 4), with no rewrite.
 than training on aliased slots. Verified: 1 and 4 reset cleanly, 64 exits 1
 with the config fix in the message.
 
-**Consequence for (f)/(g):** the FORMATION runs need `task = 8` and
+**Consequence for (f)/(g):** the FORMATION runs need `task = 2` and
 `num_drones = 4`; `config/drone.ini` still carries the HOVER values
 (`task = 1`, `num_drones = 64`). Not changed here — that is (f)'s call.
+
+### Task ids renumbered: FORMATION is 2
+
+`FORMATION` now sits directly after `HOVER` rather than appended after the
+upstream demo tasks — it is this project's task and belongs at the front.
+`HOVER` stays at **1**, so the shipped config default is unchanged; `ORBIT`
+through `RACE` shift down one (`ORBIT` 2→3 … `RACE` 7→8). Only
+`config/drone.ini`'s `task = 1` selects a task by integer anywhere in the repo,
+and it still means HOVER; everything else compares enum names, and `get_task()`
+resolves by name. A test now round-trips every `TASK_NAMES` entry through
+`get_task()` and pins `HOVER == 1` / `FORMATION == 2`, since nothing in the
+compiler ties the name table to the enum and a silent remap would be ugly to
+debug.
 
 ### Tests
 
@@ -90,8 +103,8 @@ done; next is (d), the observation extension.
 
 ### What landed
 
-- **`FORMATION` task** appended to the `DroneTask` enum (`TASK_NAMES`:
-  `"formation"`, index 8). `set_target(...)` now takes the env's `Formation*`;
+- **`FORMATION` task** added to the `DroneTask` enum (`TASK_NAMES`:
+  `"formation"`). `set_target(...)` now takes the env's `Formation*`;
   all three call sites (reset, in-step reset, render task-cycling) updated.
 - **Formation manager (tech doc §4.2–§4.3)** — slot-offset tables for all 5
   modes (box home, line, stack, compressed, diamond), `Rz(yaw)` heading

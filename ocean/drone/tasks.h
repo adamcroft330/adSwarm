@@ -10,21 +10,26 @@
 
 #include "dronelib.h"
 
+// FORMATION sits directly after HOVER: it is this project's task, and the
+// ones below it are upstream demo targets. HOVER stays at 1 so the shipped
+// config default (config/drone.ini `task = 1`) is unchanged; the upstream
+// tasks shift down one. Anything selecting a task by name via get_task() is
+// unaffected.
 typedef enum {
-    IDLE,
-    HOVER,
-    ORBIT,
-    FOLLOW,
-    CUBE,
-    CONGO,
-    FLAG,
-    RACE,
-    FORMATION,
-    TASK_N // Should always be last
+    IDLE,      // 0
+    HOVER,     // 1 — config default
+    FORMATION, // 2
+    ORBIT,     // 3
+    FOLLOW,    // 4
+    CUBE,      // 5
+    CONGO,     // 6
+    FLAG,      // 7
+    RACE,      // 8
+    TASK_N     // Should always be last
 } DroneTask;
 
-static char const* TASK_NAMES[TASK_N] = {"idle", "hover",     "orbit", "follow", "cube",
-                                         "congo", "flag", "race",  "formation"};
+static char const* TASK_NAMES[TASK_N] = {"idle", "hover", "formation", "orbit", "follow",
+                                         "cube", "congo", "flag",      "race"};
 
 DroneTask get_task(char* task_name) {
     for (size_t i = 0; i < TASK_N; i++) {
