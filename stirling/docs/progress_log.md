@@ -7,6 +7,65 @@ this records what actually landed.
 
 ---
 
+## 2026-07-16 — FORMATION task (task c): formation manager C port + moving-centroid task
+
+Ported `stirling/controller/formation_manager.py` into `ocean/drone/tasks.h`
+and wired a `FORMATION` task into the env. Stage 3 tasks (a), (b), (c) are now
+done; next is (d), the observation extension.
+
+### What landed
+
+- **`FORMATION` task** appended to the `DroneTask` enum (`TASK_NAMES`:
+  `"formation"`, index 8). `set_target(...)` now takes the env's `Formation*`;
+  all three call sites (reset, in-step reset, render task-cycling) updated.
+- **Formation manager (tech doc §4.2–§4.3)** — slot-offset tables for all 5
+  modes (box home, line, stack, compressed, diamond), `Rz(yaw)` heading
+  rotation, linear mode-transition blend over `FM_BLEND_TIME`, and the 3-part
+  feedforward velocity: `v_target = centroid.v + Rz(yaw)*d_off_blend +
+  omega x r_off`. Geometry constants match `FormationParams` in
+  `default_params.py` and are `-D`-overridable like the cascade gains.
+- **Rule-based centroid planner** — a waypoint cursor: random waypoints inset
+  2 m from the world extent (covers the largest slot offset), cruise at
+  `FM_CRUISE_SPEED` with an arrival ease-in, heading slewed toward the course
+  under a 0.5 rad/s turn-rate limit. `centroid.vel`/`yaw_rate` are set to the
+  rates *actually applied* each tick, which is what keeps the slot
+  feedforward exact.
+- **`c_step` integration** — the centroid advances once per tick, then every
+  slot target (position *and* velocity) refreshes before control runs. The
+  task (b) tracking law consumes `target->vel` via `KFF` unchanged — the
+  feedforward path was ready, as planned.
+- Units note: `FORMATION` writes `target->vel` in m/s (what the velocity stack
+  expects). The upstream `IDLE`/`CONGO` convention treats `target->vel` as a
+  per-tick displacement (`move_target`) — the two differ by `ACTION_DT` and
+  must not be mixed. `FORMATION` never calls `move_target`.
+
+### Scope held to Stage 3
+
+Single-formation, slots assigned round-robin by agent index, mode held at box
+in-env. Multi-agent slot assignment and the mode-change scheduler are Stage 4;
+the blend machinery is ported in full and test-covered now so the Stage 4
+scheduler only has to call `formation_set_mode()`.
+
+### Tests (4 new gates in `run_velocity_tests.sh`)
+
+- **Geometry**: all 5 modes' pairwise spacings match the reference; tightest
+  (compressed, 0.72 m) clears `VC_D_ACT` 0.70 m, so the APF never fights a
+  held formation.
+- **Blend**: analytic — midpoint offsets, blend-rate velocity, rotated frame,
+  and completion all exact vs the Python reference.
+- **Feedforward invariant**: `d(p_target)/dt == v_target` to 0.0013 m/s over
+  ~12k checks spanning cruise, turns, waypoint captures, and two mode
+  transitions. The one excluded tick is blend-exit, where alpha clips to 1
+  partway through a step — piecewise in the Python reference too. This
+  invariant failing is how a wrong yaw-rate or blend-rate term would surface.
+- **In-env**: `task=FORMATION`, 4 drones, 8 s of waypoint cruising — tracking
+  error 0.073 m (gate < 0.30), min separation 1.198 m (the box side, i.e.
+  slots held exactly).
+
+All prior gates unchanged and green (NFR-36: reform 1.25 s, min sep 0.488 m).
+
+---
+
 ## 2026-07-16 — Decision: BASE_K_MOT 0.15 → 0.05 s; NFR-36 now met in-env
 
 Resolves the blocker from the C-port entry below. **Decision taken: lower the

@@ -293,6 +293,187 @@ static int test_formation_reform(float k_mot_override, int quiet) {
     return ok;
 }
 
+// --- Task (c) tests: the FORMATION task -------------------------------------
+
+static int vec3_close(Vec3 a, Vec3 b, float eps) {
+    return norm3(sub3(a, b)) < eps;
+}
+
+// Test 7: slot geometry analytics. Every mode's tightest pairwise spacing must
+// clear VC_D_ACT (0.70 m) so the APF never fights a held formation, and the
+// heading rotation must be a proper Rz (yaw=pi/2 maps +x to +y).
+static int test_formation_geometry(void) {
+    // Expected tightest pairwise separations per mode, from the reference
+    // geometry (default_params.py): box 1.2, line 1.0, stack 0.75,
+    // compressed 0.72, diamond sqrt(1.0^2 + 0.7^2) ~ 1.22.
+    const float expected_min[FORM_MODE_N] = {1.2f, 1.0f, 0.75f, 0.72f, 1.2207f};
+    int ok = 1;
+    float tightest = 1e9f;
+    for (int m = 0; m < FORM_MODE_N; m++) {
+        float min_sep = 1e9f;
+        for (int i = 0; i < FM_N_SLOTS; i++) {
+            for (int j = i + 1; j < FM_N_SLOTS; j++) {
+                float d = norm3(sub3(formation_slot_offset((FormationMode)m, i),
+                                     formation_slot_offset((FormationMode)m, j)));
+                if (d < min_sep) min_sep = d;
+            }
+        }
+        if (fabsf(min_sep - expected_min[m]) > 1e-3f) {
+            printf("[formation geom] %s min_sep=%.4f, expected %.4f  -> FAIL\n",
+                   FORMATION_MODE_NAMES[m], min_sep, expected_min[m]);
+            ok = 0;
+        }
+        if (min_sep < tightest) tightest = min_sep;
+    }
+    // Rz sanity: yaw=pi/2 maps box slot 0 (s, s, 0) to (-s, s, 0).
+    Vec3 r = rz_rotate(0.5f * (float)M_PI, (Vec3){0.6f, 0.6f, 0.0f});
+    if (!vec3_close(r, (Vec3){-0.6f, 0.6f, 0.0f}, 1e-5f)) {
+        printf("[formation geom] Rz(pi/2) wrong: got (%.3f, %.3f, %.3f)\n", r.x, r.y, r.z);
+        ok = 0;
+    }
+    printf("[formation geom] all 5 modes match reference; tightest spacing %.2f m > D_ACT %.2f  -> %s\n",
+           tightest, (double)VC_D_ACT, ok && tightest > VC_D_ACT ? "PASS" : "FAIL");
+    return ok && tightest > VC_D_ACT;
+}
+
+// Test 8: mode-transition blend, checked analytically against the reference
+// (formation_manager.py): offsets interpolate linearly over FM_BLEND_TIME,
+// v_target carries the blend rate while 0<alpha<1, and both vanish once the
+// transition completes.
+static int test_formation_blend(void) {
+    Formation f;
+    unsigned int rng = 7;
+    formation_reset(&f, &rng, 1.0f);
+    f.centroid.pos = (Vec3){0, 0, 0};
+    f.centroid.vel = (Vec3){0, 0, 0};
+    f.centroid.yaw = 0.0f;
+    f.centroid.yaw_rate = 0.0f;
+
+    formation_set_mode(&f, FORM_LINE);
+    f.t = f.blend_t0 + 0.5f * FM_BLEND_TIME; // alpha = 0.5
+
+    Vec3 p, v;
+    formation_slot_target(&f, 0, &p, &v);
+    // Midpoint of box slot 0 (0.6, 0.6, 0) and line slot 0 (1.5, 0, 0).
+    int mid_ok = vec3_close(p, (Vec3){1.05f, 0.3f, 0.0f}, 1e-5f);
+    // Blend rate: (off_line - off_box) / blend_time.
+    int vel_ok = vec3_close(v, (Vec3){0.9f, -0.6f, 0.0f}, 1e-5f);
+
+    // Rotated: same blend under yaw = pi/2.
+    f.centroid.yaw = 0.5f * (float)M_PI;
+    formation_slot_target(&f, 0, &p, &v);
+    int rot_ok = vec3_close(p, (Vec3){-0.3f, 1.05f, 0.0f}, 1e-5f)
+              && vec3_close(v, (Vec3){0.6f, 0.9f, 0.0f}, 1e-5f);
+    f.centroid.yaw = 0.0f;
+
+    // Completed: exactly on the line slots, no residual blend velocity.
+    f.t = f.blend_t0 + 2.0f * FM_BLEND_TIME;
+    formation_slot_target(&f, 0, &p, &v);
+    int done_ok = vec3_close(p, (Vec3){1.5f, 0.0f, 0.0f}, 1e-5f)
+               && vec3_close(v, (Vec3){0.0f, 0.0f, 0.0f}, 1e-5f);
+
+    int ok = mid_ok && vel_ok && rot_ok && done_ok;
+    printf("[formation blend] midpoint=%s  blend_vel=%s  rotated=%s  completed=%s  -> %s\n",
+           mid_ok ? "ok" : "BAD", vel_ok ? "ok" : "BAD", rot_ok ? "ok" : "BAD",
+           done_ok ? "ok" : "BAD", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Test 9: feedforward consistency — the invariant the tracking law relies on.
+// The finite difference of each slot's target position must equal the reported
+// v_target at every tick (to O(dt)), across cruising, turning, waypoint
+// captures, and a mid-flight mode transition. This is what makes KFF exact on
+// a moving, turning, blending formation; if any of the three velocity terms
+// (centroid, blend rate, yaw rate) is wrong, this fails loudly.
+static int test_formation_feedforward_consistency(void) {
+    Formation f;
+    unsigned int rng = 123;
+    formation_reset(&f, &rng, 1.0f);
+
+    Vec3 prev_p[FM_N_SLOTS];
+    Vec3 v_unused;
+    for (int s = 0; s < FM_N_SLOTS; s++) formation_slot_target(&f, s, &prev_p[s], &v_unused);
+
+    float max_err = 0.0f;
+    float a_prev = formation_blend_alpha(&f);
+    int checked = 0;
+    for (int t = 0; t < 3000; t++) {
+        if (t == 800) formation_set_mode(&f, FORM_LINE);
+        if (t == 1600) formation_set_mode(&f, FORM_DIAMOND);
+
+        formation_step(&f, &rng, ACTION_DT);
+        float a = formation_blend_alpha(&f);
+        // The one tick the invariant cannot hold: alpha clips to 1 partway
+        // through the step, so the position still moves the last sliver of
+        // blend while the reported rate is already zero. The reference's
+        // piecewise blend has the same property; every other tick — entering
+        // a blend, inside it, cruising — must match.
+        int blend_exit = (a_prev < 1.0f && a >= 1.0f);
+        a_prev = a;
+
+        for (int s = 0; s < FM_N_SLOTS; s++) {
+            Vec3 p, v;
+            formation_slot_target(&f, s, &p, &v);
+            if (!blend_exit) {
+                Vec3 fd = scalmul3(sub3(p, prev_p[s]), 1.0f / ACTION_DT);
+                float err = norm3(sub3(fd, v));
+                if (err > max_err) max_err = err;
+                checked++;
+            }
+            prev_p[s] = p;
+        }
+    }
+    // Centroid must also stay inside the flyable volume.
+    Vec3 c = f.centroid.pos;
+    int bounds_ok = fabsf(c.x) <= MARGIN_X && fabsf(c.y) <= MARGIN_Y && fabsf(c.z) <= MARGIN_Z;
+    int ok = (max_err < 0.05f) && bounds_ok && checked > 10000;
+    printf("[formation ff]  max |d(p_target)/dt - v_target| = %.4f m/s over %d checks "
+           "(gate <0.05)  centroid in bounds=%d  -> %s\n",
+           max_err, checked, bounds_ok, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Test 10: the FORMATION task in-env — c_step advances the centroid, refreshes
+// slot targets, and the classical stack tracks them. Start the 4 drones on
+// their slots (the reform transient is test 6's job) and gate on cruise
+// tracking error and the separation floor while the formation flies waypoints.
+static int test_formation_task_in_env(void) {
+    DroneEnv* env = make_env(4, CONTROL_MODE_VELOCITY, 0.0f);
+    env->task = FORMATION;
+    c_reset(env);
+    for (int i = 0; i < 4; i++) {
+        Drone* a = &env->agents[i];
+        a->state.pos = a->target->pos; // start settled on-slot
+        a->state.vel = a->target->vel;
+        a->state.omega = (Vec3){0, 0, 0};
+        a->state.quat = (Quat){1, 0, 0, 0};
+        a->integ = (Vec3){0, 0, 0};
+    }
+
+    float max_err = 0.0f, min_sep = 1e9f;
+    int finite = 1;
+    for (int t = 0; t < 800; t++) {
+        c_step(env); // actions stay zero => dv=0 => pure classical
+        if (t < 200) continue; // RPM spin-up + first-waypoint transient
+        for (int i = 0; i < 4; i++) {
+            Vec3 p = env->agents[i].state.pos;
+            if (!isfinite(p.x) || !isfinite(p.y) || !isfinite(p.z)) finite = 0;
+            float e = norm3(sub3(env->agents[i].target->pos, p));
+            if (e > max_err) max_err = e;
+            for (int j = i + 1; j < 4; j++) {
+                float d = norm3(sub3(p, env->agents[j].state.pos));
+                if (d < min_sep) min_sep = d;
+            }
+        }
+    }
+    int ok = finite && (max_err < 0.30f) && (min_sep >= 0.40f);
+    printf("[formation env] cruise tracking err=%.3f m (gate <0.30)  min_sep=%.3f m "
+           "(gate >=0.40)  finite=%d  -> %s\n",
+           max_err, min_sep, finite, ok ? "PASS" : "FAIL");
+    free(env);
+    return ok;
+}
+
 int main(int argc, char** argv) {
     // Gate mode: `test_velocity_wrapper <k_mot>` runs only the NFR-36 formation
     // gate at the given motor time constant and returns its verdict as the exit
@@ -310,6 +491,12 @@ int main(int argc, char** argv) {
     pass &= test_moving_target_feedforward();
     pass &= test_apf_separation();          // equilibrium only; see note above
     pass &= test_formation_reform(0.0f, 0); // NFR-36 gate at the shipped k_mot
+
+    printf("--- task (c): FORMATION task ---\n");
+    pass &= test_formation_geometry();
+    pass &= test_formation_blend();
+    pass &= test_formation_feedforward_consistency();
+    pass &= test_formation_task_in_env();
 
     // Why the cascade is tuned the way it is. The control law is identical in
     // every row — only the platform's motor time constant moves. BASE_K_MOT was

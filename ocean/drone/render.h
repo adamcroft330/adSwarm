@@ -431,9 +431,12 @@ void c_render(DroneEnv* env) {
         if (env->task == RACE) {
             reset_rings(&env->rng, env->ring_buffer, env->max_rings);
         }
+        if (env->task == FORMATION) {
+            formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+        }
 
         for (int i = 0; i < env->num_agents; i++) {
-            set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist);
+            set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist, &env->formation);
         }
     }
 

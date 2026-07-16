@@ -53,6 +53,10 @@ struct DroneEnv {
     // control_mode=1: classical velocity control + k_res-scaled residual.
     int control_mode;
     float k_res;
+
+    // Formation task (tasks.h): shared virtual centroid + slot geometry.
+    // Advanced once per tick in c_step; unused by the other tasks.
+    Formation formation;
 };
 
 void init(DroneEnv* env) {
@@ -135,11 +139,14 @@ void c_reset(DroneEnv* env) {
     if (env->task == RACE) {
         reset_rings(&env->rng, env->ring_buffer, env->max_rings);
     }
+    if (env->task == FORMATION) {
+        formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+    }
 
     for (int i = 0; i < env->num_agents; i++) {
         Drone* agent = &env->agents[i];
         reset_agent(env, agent, i);
-        set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist);
+        set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist, &env->formation);
     }
 
     compute_observations(env);
@@ -147,6 +154,16 @@ void c_reset(DroneEnv* env) {
 
 void c_step(DroneEnv* env) {
     env->tick = (env->tick + 1) % HORIZON;
+
+    // Advance the formation centroid once per tick, then refresh every slot's
+    // world-frame target (and its feedforward velocity) before control runs.
+    // The moving target is what the classical tracker's KFF term consumes.
+    if (env->task == FORMATION) {
+        formation_step(&env->formation, &env->rng, ACTION_DT);
+        for (int i = 0; i < env->num_agents; i++) {
+            set_target_formation(&env->formation, &env->agents[i], i);
+        }
+    }
 
     for (int i = 0; i < env->num_agents; i++) {
         Drone* agent = &env->agents[i];
@@ -194,7 +211,7 @@ void c_step(DroneEnv* env) {
         if (reset) {
             add_log(env, i, oob, timeout);
             reset_agent(env, agent, i);
-            set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist);
+            set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist, &env->formation);
         }
     }
 
