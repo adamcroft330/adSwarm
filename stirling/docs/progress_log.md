@@ -7,6 +7,79 @@ this records what actually landed.
 
 ---
 
+## 2026-07-16 — Classical controller C port (task b); sim motor lag blocks NFR-36
+
+Ported the classical controller from `stirling/controller/` (Python) into
+`ocean/drone/velocity_controller.h`, replacing task (a)'s placeholder P-law.
+**The port is faithful. The sim's motor constant, not the port, is what fails
+the 2 s reform rule.**
+
+### What landed
+
+- **Tracking law (§8.2)** — `u = KFF*v_target + KP*e + KI*integ` with
+  conditional anti-windup and a per-axis integral clamp. Per-drone integral
+  state added to `Drone` (`dronelib.h`), reset in `init_drone`.
+- **APF safety filter (§8.3)** — inter-drone repulsion with closing-rate
+  damping, plus course-boundary push-back against the world extent. No solver
+  dependency. Obstacle repulsion is deliberately absent: the env has no
+  obstacle primitives yet (Stage 4); the Python term slots in unchanged.
+- **Four-layer composition** — `u_classic → + k_res*dv → safety_filter →
+  velocity_to_motor`. The residual is added *before* the filter, so the
+  separation guarantee holds regardless of the policy. `u_classic` is returned
+  for the future observation extension (RL pipeline §2.5).
+- Cascade gains are now `-D`-overridable — the seam Stage 2 recalibration and
+  the test sweep both use.
+
+### The port is faithful — evidence
+
+Run the reference cascade (the gains `stirling/controller/default_params.py`
+uses: kp=2.0, kv=5.0, kr=200, kw=25, v_max=3.0) on a platform with a realistic
+motor lag, and the C port reproduces the MuJoCo validation almost exactly:
+
+| Metric | MuJoCo (Python) | C port @ `k_mot=0.05 s` |
+| --- | ---: | ---: |
+| Reform after 2.5 m/s kick | 1.29 s | **1.25 s** |
+| Min inter-drone separation | 0.49 m | **0.487 m** |
+| Worst formation error | 0.76 m | **0.76 m** |
+
+This is the NFR-36 gate, and it **passes** —
+`bash stirling/tests/run_velocity_tests.sh` asserts it (exit code).
+
+### The real blocker: `BASE_K_MOT = 0.15 s`
+
+With the sim's shipped Crazyflie constants the same law gives **reform 6.41 s**
+and blows through the separation floor on the transient. The cause is the motor
+time constant, which caps the whole cascade:
+
+- At `k_mot=0.15 s` the reference cascade is **unstable** (diverges to ~190 m).
+  The motor lag cannot support kp=2/kv=5, so the gains must be detuned to
+  kp=0.6/kv=2 — and at kv=2 a 2.5 m/s kick coasts ~1.25 m before stopping,
+  which no amount of outer-loop tuning recovers.
+- Detuned gains + faster motors is *also* not enough (reform 3.75 s at
+  `k_mot=0.02`): motors and gains are coupled, and both must move together.
+- At any **realistic** motor lag (0.02–0.08 s) with the reference cascade, the
+  gate passes. `BASE_K_MOT = 0.15 s` is sluggish for a Crazyflie 2.1 (real
+  ≈ 0.02–0.05 s) and looks like an upstream sim artifact.
+
+**Consequence:** the classical controller alone cannot meet the 2 s reform rule
+in the env as shipped. This is the Stage 2 (platform recalibration) dependency
+biting Stage 3 — the requirement was written for the real 250-class platform,
+not the Crazyflie constants the sim inherits. Options, none taken yet: lower
+`BASE_K_MOT` (a Stage 2 decision; it changes env dynamics and would invalidate
+the recorded Stage 1 baseline), or accept a ~6.4 s classical floor for Stage 3a
+and let the residual close the gap (its stated job, but 6.4 s → 2 s is a large
+ask). **Flagging for a decision rather than silently tuning to green.**
+
+### Also verified
+
+- Feedforward works: 0.063 m lag tracking a 0.5 m/s target (≈0.83 m with
+  `KFF=0`), so the moving-formation case is covered.
+- APF equilibrium is correct — two drones commanded to the same point settle
+  1.11 m apart. The floor violations are *transient* blow-through during a
+  fast approach, not a logic error.
+- Task (a) hover tests still pass, slightly improved by the I + feedforward
+  terms (settle 3.66 s vs 4.12 s).
+
 ## 2026-07-16 — Stage 3a regression: velocity wrapper proven inert (task a closed)
 
 Ran the `control_mode=0` regression the Stage 3 plan sequences before any

@@ -134,6 +134,10 @@ typedef struct {
     // current target
     Target* target;
 
+    // classical controller integral state (velocity_controller.h); world
+    // frame, [m*s]. Caller-owned so the control law stays a pure function.
+    Vec3 integ;
+
     // target buffer
     Target* buffer;
     int buffer_idx;
@@ -301,6 +305,7 @@ static inline void init_drone(Drone* drone, unsigned int* rng, float dr) {
     drone->state.vel = (Vec3){0.0f, 0.0f, 0.0f};
     drone->state.omega = (Vec3){0.0f, 0.0f, 0.0f};
     drone->state.quat = (Quat){1.0f, 0.0f, 0.0f, 0.0f};
+    drone->integ = (Vec3){0.0f, 0.0f, 0.0f};
 }
 
 static inline void compute_derivatives(State* state, Params* params, float* actions,
