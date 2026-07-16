@@ -5,6 +5,16 @@ Written 2026-06-30. Covers Stage 3 of the RL pipeline (`rl_pipeline_doc_v0_3.md`
 controller, the FORMATION task, and the residual RL action interface on top
 of the Stage 1 baseline.
 
+> **Progress update (2026-07-14):** parts of this plan have since landed —
+> the classical controller is reconstructed and MuJoCo-validated
+> (`stirling/controller/`, task a/b groundwork), and the velocity-setpoint
+> wrapper (task a) is implemented in `ocean/drone/velocity_controller.h` on
+> branch `stage3a-velocity-wrapper`. The "classical controller source is
+> missing" blocker below is **resolved**. Training now runs via the Modal
+> framework (`stirling/modal/`), not the RunPod flow this doc assumes. See
+> `progress_log.md` for the current state; the task breakdown below is kept
+> as the original plan of record.
+
 ## Status going in
 
 Stage 1 is complete: unmodified Ocean `drone` HOVER task trained to 40M
