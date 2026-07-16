@@ -228,6 +228,30 @@ Kp ≈ 2.0 gives closed-loop time constant ~0.5 s — reform settling well insid
 APF (default, C-portable): artificial potential field repulsion for inter-drone separation, obstacles, and course boundary. Includes closing-rate damping on the inter-drone term to brake fast approaches. No solver dependency — maps directly to C.
 CBF-QP (upgrade): solves a small constrained QP to minimally edit the command while guaranteeing separation. Uses quadprog in MATLAB; falls back to APF automatically when no solver is present. In C, replace with a lightweight active-set QP (handful of constraints). Gives a hard safety guarantee regardless of the RL residual — the safety filter wraps u_classic + k_res×dv, so the guarantee holds even if the policy misbehaves.
 
+**Update (2026-07-16) — when the CBF upgrade becomes necessary, quantified.**
+The APF's lack of a hard guarantee now has a number attached. Repulsion is
+distance-triggered, but a drone cannot stop instantly: after its command
+reverses it coasts `v / KV` (the velocity loop's time constant × its speed). Two
+drones closing head-on therefore cover `2v / KV` *after* the filter fires. The
+APF holds only while that stays inside the activation band:
+
+> **v_safe = D_ACT × KV / 2** — at the shipped gains (D_ACT 0.70 m, KV 5):
+> **≈ 1.75 m/s per drone.**
+
+Above that closing speed, distance-based APF **cannot** hold the 0.40 m floor no
+matter how the gains are set — the geometry has already decided. Measured: two
+drones commanded onto the same point at v_max = 3 m/s breach to 0.042 m, while
+settling correctly to the analytic 0.61 m equilibrium (so the repulsion maths is
+right; the breach is a transient). This reproduces the Python reference exactly
+and is inherent to APF, not a defect.
+
+Consequences: (a) formation geometry and v_max must keep realistic closing
+speeds under ~1.75 m/s — the box formation does, comfortably (min sep 0.488 m
+post-kick); (b) **if the RL residual is ever given enough authority to command
+head-on convergence above ~1.75 m/s, the APF guarantee is void and CBF-QP
+becomes mandatory, not optional.** That is the concrete trigger for this
+upgrade. Bounding `k_res` is the cheaper alternative.
+
 ## 8.4 Smoke-Test Results (Octave, APF path)
 
 | Metric | Result | Target |
@@ -235,6 +259,24 @@ CBF-QP (upgrade): solves a small constrained QP to minimally edit the command wh
 | Reform time after disturbance kick | 0.60 s | < 2.0 s (competition rule) |
 | Min inter-drone separation | 0.54 m | ≥ 0.40 m floor (FR-15 TBC) |
 | Worst formation error | 0.49 m | < TBC m (post-kick transient) |
+
+**Update (2026-07-16) — validation chain.** The Octave figures above are
+optimistic: that harness integrated the velocity setpoint directly (the drone
+*is* its velocity command), so it excludes actuator lag, attitude dynamics and
+thrust limits. The control law has since been re-validated twice under full
+rigid-body dynamics, and the same law costs roughly 2× the reform time once a
+real inner loop is in the path:
+
+| Metric | Octave (ideal) | MuJoCo (rigid-body) | PufferLib C env | Target |
+| --- | ---: | ---: | ---: | ---: |
+| Reform after kick | 0.60 s | 1.29 s | **1.25 s** | < 2.0 s |
+| Min separation | 0.54 m | 0.49 m | **0.488 m** | ≥ 0.40 m |
+| Worst error | 0.49 m | 0.76 m | **0.76 m** | TBC |
+
+All three still clear the 2 s rule, but the margin is ~0.75 s, not ~1.4 s.
+**Plan against 1.25–1.3 s, not 0.60 s.** The MuJoCo↔C agreement (~3%) is what
+establishes the C port as faithful (§8.6). Reproduce with
+`bash stirling/tests/run_velocity_tests.sh`.
 
 ## 8.5 Tuning Order
 
@@ -247,6 +289,38 @@ Strictly follow this order to avoid masking bugs with gain tuning:
 ## 8.6 C Port (Env + Hardware)
 
 The MATLAB files are the import blueprint. The APF path is dependency-free and maps directly to C; port to dronelib.h or velocity_controller.h inside the env. The CBF path requires a small C QP for the env and hardware path. Runtime on hardware: u_classic and the policy forward pass both run every control cycle on the companion computer. The safety filter wraps both outputs before the autopilot command.
+
+**Status (2026-07-16): env-side C port COMPLETE.** `ocean/drone/velocity_controller.h`
+carries the tracking law (§8.2, with conditional anti-windup), the APF filter
+(§8.3, obstacle term deferred until the env has obstacle primitives), and the
+four-layer composition with the residual added *before* the filter. NFR-36
+passes in-env (§8.4). The MATLAB draft could not be located, so the blueprint
+was reconstructed as Python (`stirling/controller/`), validated in MuJoCo, then
+ported — the ~3% MuJoCo↔C agreement is the faithfulness evidence.
+
+**Finding: the actuator sets the ceiling on the whole controller.** The port
+initially reformed in 6.41 s, and the cause was neither the law nor the tuning
+but a single simulator constant — the motor time constant `BASE_K_MOT`, shipped
+at 0.15 s. The control cascade is a bandwidth ladder (position < velocity <
+attitude < motor, each ~3× the one below), so the actuator caps every rung above
+it. At 0.15 s the gains that meet §8.4 are **unstable**, forcing a detune at
+which a 2.5 m/s disturbance coasts ~1.25 m — unrecoverable by any outer-loop
+tuning. Faster motors *alone* did not fix it either (3.75 s at 0.02 s with
+detuned gains): motors and gains are **coupled** and must move together.
+Lowering `BASE_K_MOT` to a realistic 0.05 s (a real Crazyflie 2.1 is 0.02–0.05 s)
+and restoring the reference gains met spec immediately. This is a Stage 2
+platform recalibration taken early.
+
+**Implication for hardware bring-up (§3).** Motor+prop response is not a
+second-order detail; it propagates directly into whether the 2 s reform rule is
+achievable. Any 5"-class build on bidirectional-DShot ESCs is comfortably fast
+enough (~20–50 ms typical), so this does **not** discriminate between the §3.2
+candidates — but it is worth an acceptance check on whatever is bought:
+**measure the motor step response and confirm τ ≲ 50 ms** (DShot RPM telemetry
+gives this for free). Where it could bite: oversized props (inertia scales
+hard with diameter), a heavy build pushed to 6–7", or underpowered ESCs. Note
+the direction of inference is backwards — the sim should be calibrated *from*
+the hardware — so treat this as a bring-up check, not a derived requirement.
 
 # 9. Localisation
 
@@ -317,7 +391,9 @@ Failsafe on zero residual: zeroing the RL residual at runtime recovers the pure 
 | UWB modules — procure and integrate | High | NEW — recommended; decide pre-Stage 5 |
 | Mighty Camera batch 2 arrival timing | High | NEW — preorder now; hedge with OAK-D Lite |
 | VIO stack integration + drift calibration | High | NEW — begin bench testing when Mighty/OAK-D arrives |
-| CBF-QP vs APF safety filter | Medium | NEW — APF is default; promote CBF to default and port to C if scoring analysis warrants the stronger guarantee |
+| CBF-QP vs APF safety filter | Medium | APF is default. **Trigger now quantified (§8.3):** APF cannot hold the 0.40 m floor above ~1.75 m/s head-on closing (`D_ACT×KV/2`) — geometry, not tuning. Box formation is comfortably inside. CBF becomes **mandatory** only if the residual is given authority to command convergence above that; bounding `k_res` is the cheaper alternative. Decide when `k_res` is swept in Stage 3b |
+| Motor+prop response on the real platform | Medium | NEW — actuator lag caps the whole control cascade and propagates into whether the 2 s reform rule is achievable (§8.6). Not a selection criterion (any 5"-class DShot build clears it), but a bring-up acceptance check: measure step response, confirm τ ≲ 50 ms |
+| Stage 3 independence from the hardware decision | Medium | NEW — the plan's premise that Stage 3 runs on placeholder Crazyflie constants held for task (a) but **broke at task (b)**: one platform constant (`BASE_K_MOT`) had to move for the formation requirement to be achievable at all. Expect further Stage 2 coupling as Stage 3 progresses; the `BASE_*` block is the seam |
 | Inter-drone comms: mesh radio vs ESP-NOW vs Wi-Fi | High | No ground station allowed |
 | Obstacle perception design (depth, free-space, learned) | High | Obstacle navigation required |
 | Formation mode set finalisation | Medium | Course reveal in 4 weeks pre-race |
@@ -329,6 +405,9 @@ Failsafe on zero residual: zeroing the RL residual at runtime recovers the pure 
 
 ## 11.1 Items Closed Since v0.6
 
+Classical controller C port (NFR-36): env-side port complete and validated — reform 1.25 s, min separation 0.488 m, reproducing the MuJoCo reference to ~3% (§8.4, §8.6). Gated by `stirling/tests/run_velocity_tests.sh`. Closed 2026-07-16.
+Velocity-setpoint wrapper (Stage 3a): implemented and proven inert when disabled — byte-identical checkpoints with and without it, so Stage 1 cannot regress. Closed 2026-07-16.
+Simulator motor time constant: `BASE_K_MOT` lowered 0.15 s → 0.05 s. The old value was unrealistic (a real Crazyflie 2.1 is ~0.02–0.05 s) and was the sole reason the 2 s reform rule was unreachable in-env (§8.6). Stage 2 recalibration taken early; directionally safe since every candidate platform is faster than 0.15 s. Closed 2026-07-16.
 Training execution infrastructure: Modal cloud-GPU framework operational — one-command build+train+return, cached native backend, checkpoints mirrored to a Volume (§5.2). Closed this session.
 Stage 1 baseline runnable end-to-end: HOVER trains on Modal and evals on a developer Mac via the native→torch checkpoint bridge. Closed this session — see §5.2.
 Training/inference precision policy: default to fp32 after the bf16→fp32 transfer finding; `--bf16` retained for Modal-only speed experiments (§5.2). Closed this session.
@@ -365,6 +444,8 @@ Run format: A→B single traversal, ≤5 min, 2 official runs (best counts). Flo
 | ArduPilot Guided mode | ardupilot.org/copter/docs/ac2_guidedmode.html |
 
 # Appendix A — Changelog
+
+v0.8 (July 2026): Classical controller C-port session. (1) C port complete (§8.6): tracking law + APF filter + four-layer composition in `ocean/drone/velocity_controller.h`; NFR-36 closed. The MATLAB draft was never located, so the law was reconstructed as Python, MuJoCo-validated, then ported — the ~3% MuJoCo↔C agreement is the faithfulness evidence. (2) §8.4 validation chain added: the 0.60 s Octave figure is ideal-dynamics and optimistic; under full rigid-body dynamics the same law reforms in 1.25–1.29 s. Margin against the 2 s rule is ~0.75 s, not ~1.4 s — **plan against 1.25 s**. (3) Simulator `BASE_K_MOT` lowered 0.15 → 0.05 s (§8.6): the actuator caps the whole control cascade, and at 0.15 s the gains meeting spec are unstable, making the 2 s rule unreachable regardless of the control law. Stage 2 recalibration taken early. (4) CBF-QP trigger quantified (§8.3): APF cannot hold the 0.40 m floor above ~1.75 m/s head-on closing (`D_ACT×KV/2`) — CBF becomes mandatory only if the residual is given that authority; bounding `k_res` is the cheaper alternative. (5) Hardware bring-up check added (§8.6): measure motor step response, confirm τ ≲ 50 ms — not a §3 selection criterion, as any 5"-class DShot build clears it. (6) New open item (§11): Stage 3's assumed independence from the hardware decision broke at task (b). No architecture (control law, sensors, VIO, formation) changed.
 
 v0.7 (July 2026): Training-execution + precision session. (1) Modal cloud-GPU training framework operational (§5.2): one-command build+train+return, runtime-compiled native backend cached to a Volume, checkpoints returned locally as native `.bin` + torch `.pt`, headless mp4 eval; Stage 1 HOVER runs end-to-end (train on Modal → eval on Mac). (2) Precision policy locked to fp32 (§2, §5.2): a bf16-trained hover policy does not transfer to fp32 (destabilises within ~100 steps) and the Mac eval path is fp32-only, so training and inference default to fp32; `--bf16` retained for Modal-only experiments. (3) New robustness risk logged (§11): bf16→fp32 fragility indicates a marginally-stable policy — added to the Stage 5 transfer checklist. No architecture (control, sensors, VIO, formation) changed.
 

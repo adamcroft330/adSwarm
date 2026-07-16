@@ -62,8 +62,20 @@ shows the cost immediately (at 0.15 s these gains diverge to ~190 m).
   numbers Stage 3 is actually judged against are the **Stage 3a classical
   floor** and the **Stage 3b residual**, which must be measured on the
   FORMATION task, not motor-level HOVER. A `kmot005-smoke` run was done only to
-  confirm the env still trains after the constant change. The older
-  `wrapper-regression` checkpoint is historical.
+  confirm the env still trains after the constant change — it does, and every
+  metric improved as predicted (faster motors make the control problem easier):
+
+  | Metric | k_mot 0.15 | k_mot 0.05 |
+  | --- | ---: | ---: |
+  | score | 740.4 | 820.2 |
+  | ema_dist | 0.099 | **0.009** |
+  | episode_length | 997.3 | **1024.0** (full) |
+  | oob rate | 3.2% | **0%** |
+
+  Hover is ~11× tighter and no episode goes out of bounds. Recorded as a smoke
+  result, **not** a reference. (It lands near the original bf16 836.9 by
+  coincidence — different precision *and* different dynamics, so the two are
+  not comparable.) The older `wrapper-regression` checkpoint is historical.
 - **A motor-level ceiling run is still worth doing later — on FORMATION.**
   RL pipeline §2.4 lists conditions to escalate to motor-level control. Judging
   that needs the ceiling (what unconstrained control achieves) alongside the
