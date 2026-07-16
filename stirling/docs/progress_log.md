@@ -7,6 +7,50 @@ this records what actually landed.
 
 ---
 
+## 2026-07-16 — Stage 3a regression: velocity wrapper proven inert (task a closed)
+
+Ran the `control_mode=0` regression the Stage 3 plan sequences before any
+formation logic lands, now that the Modal framework and the wrapper are on one
+branch. **Result: pass, conclusively.**
+
+### Method
+
+Two 40M-step HOVER runs via Modal, identical config (fp32, A10G, `seed=42`,
+`config/drone.ini` defaults), differing *only* in whether the wrapper code is
+present:
+
+| Run | Branch | Wrapper in `c_step`? |
+| --- | --- | --- |
+| `wrapper-regression` | `stage3a-velocity-wrapper` | yes (inert, `control_mode=0`) |
+| `control-no-wrapper` | `stirling-drone` | no — code absent entirely |
+
+### Result: byte-identical
+
+Both runs produced **byte-for-byte identical checkpoints**
+(`md5 14794a4ab236d48fe8fb2938edd3d80e`) and identical metrics to three
+decimals: score 740.424, `ema_dist` 0.099, `episode_return` 45.418,
+`episode_length` 997.307, `perf` 0.937. Training is seeded and deterministic,
+so identical weights after 40M steps proves the executed code path is
+bit-identical — `control_mode=0` cannot regress Stage 1.
+
+### Why the control run mattered
+
+Against the *historical* Stage 1 baseline (score 836.9, `ema_dist` 0.020) the
+wrapper run looks ~12% worse — which would read as a regression. It is not:
+that baseline was **bf16 on an RTX 5090**, this is **fp32 on an A10G**, so two
+variables moved alongside the wrapper. The no-wrapper control lands on exactly
+740.424 too, attributing the entire gap to precision + GPU and none of it to
+the wrapper. `ema_dist` 0.099 also matches the documented fp32 expectation
+(~0.10) from the 2026-07-15 precision finding. Comparing against the old
+baseline alone would have been ambiguous at best and misleading at worst.
+
+Fallback checkpoint kept at `stirling/artifacts/drone/wrapper-regression/`
+(fp32 40M HOVER, `.bin` + Mac-evalable `.pt`); other experiment outputs are
+gitignored as regenerable.
+
+**Stage 3 task (a) is closed** — the wrapper is verified inert by construction
+*and* by experiment (PR #4).
+
 ## 2026-07-15 — Precision finding: fp32 default; Stage 1 HOVER verified end-to-end
 
 Ran the first full HOVER baselines through the Modal framework and chased down

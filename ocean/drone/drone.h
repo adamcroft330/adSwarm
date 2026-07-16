@@ -11,6 +11,7 @@
 
 #include "dronelib.h"
 #include "tasks.h"
+#include "velocity_controller.h"
 
 #define HORIZON 1024
 
@@ -46,6 +47,12 @@ struct DroneEnv {
     float hover_dist;
     float hover_omega;
     float hover_vel;
+
+    // Stirling velocity-setpoint stack (velocity_controller.h).
+    // control_mode=0: native motor actions (Stage 1 path, default).
+    // control_mode=1: classical velocity control + k_res-scaled residual.
+    int control_mode;
+    float k_res;
 };
 
 void init(DroneEnv* env) {
@@ -145,7 +152,15 @@ void c_step(DroneEnv* env) {
         Drone* agent = &env->agents[i];
 
         agent->prev_pos = agent->state.pos;
-        move_drone(agent, &env->actions[4 * i]);
+        if (env->control_mode == CONTROL_MODE_VELOCITY) {
+            // Policy actions become the 3-float residual dv (4th unused);
+            // k_res=0 gives the pure classical dv=0 benchmark.
+            float motor_actions[4];
+            velocity_control_step(agent, &env->actions[4 * i], env->k_res, motor_actions);
+            move_drone(agent, motor_actions);
+        } else {
+            move_drone(agent, &env->actions[4 * i]);
+        }
         agent->episode_length++;
 
         bool oob = norm3(sub3(agent->target->pos, agent->state.pos)) > (env->hover_target_dist + 1.0f);

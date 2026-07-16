@@ -21,6 +21,13 @@ void my_init(Env* env, Dict* kwargs) {
     env->hover_dist = dict_get(kwargs, "hover_dist")->value;
     env->hover_omega = dict_get(kwargs, "hover_omega")->value;
     env->hover_vel = dict_get(kwargs, "hover_vel")->value;
+
+    // Stirling velocity-setpoint stack: optional kwargs so existing configs
+    // (Stage 1) keep the native motor path without any ini change.
+    DictItem* control_mode = dict_get_unsafe(kwargs, "control_mode");
+    env->control_mode = control_mode ? (int)control_mode->value : CONTROL_MODE_MOTOR;
+    DictItem* k_res = dict_get_unsafe(kwargs, "k_res");
+    env->k_res = k_res ? (float)k_res->value : 0.0f;
     init(env);
 }
 
