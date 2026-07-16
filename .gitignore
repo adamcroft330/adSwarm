@@ -175,3 +175,10 @@ resources/drive/binaries/*
 
 # Stirling: regenerable render artifacts (produced by demo/eval scripts)
 stirling/artifacts/**/*.mp4
+
+# Stirling: training experiment outputs — regenerable with `modal run
+# stirling/modal/train_drone.py --tag <tag>`, so not worth the git weight.
+# One fp32 40M HOVER checkpoint is kept as a reference/fallback (and as the
+# artifact of the Stage 3a control_mode=0 regression; see progress_log.md).
+stirling/artifacts/drone/*
+!stirling/artifacts/drone/wrapper-regression/
