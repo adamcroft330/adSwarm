@@ -1,10 +1,12 @@
-# Formation Racing Drone Swarm — Tech Docs v0.6
+# Formation Racing Drone Swarm — Tech Docs v0.7
 
-Project Technical Documentation — Version 0.6
+Project Technical Documentation — Version 0.7
 
-Updated June 2026 — Classical controller drafted; sensor suite determined; VIO platform selected; inter-drone ranging architecture decided; formation reframed (box = home).
+Updated July 2026 — Modal cloud-training framework operational; Stage 1 HOVER baseline trainable and Mac-evalable end-to-end; training/inference precision policy set to fp32 after a bf16→fp32 transfer finding.
 
-MINOR REVISION: Following the classical control architecture session (June 2026), this revision closes the sensor suite, selects a primary VIO module, defines the inter-drone ranging strategy, reframes the formation modes (box/square is the home formation; all other modes are transient obstacle-avoidance deviations), and adds a new Classical Controller section recording the MATLAB draft and smoke-test results. The residual RL decision (RL pipeline §2.5) is reaffirmed. Sections updated: 2, 4, 6.2, 7, 8 (new), 9, 11, 12.
+MINOR REVISION (v0.7, July 2026): Records the training-execution infrastructure now in use and one load-bearing numerical finding. (1) A low-friction Modal cloud-GPU training framework (`stirling/modal/`) trains the PufferLib drone env with one command and returns the checkpoint locally — Stage 1 HOVER now runs end-to-end. (2) Precision policy: the native CUDA backend can train in bf16 or fp32; a bf16-trained hover policy does NOT transfer to fp32 (hovers under bf16, destabilises within ~100 steps under fp32), and the Mac/torch eval path is fp32-only — so training and onboard inference default to fp32. This also flags a policy-robustness risk (§11). Sections updated: 2, 5 (new §5.2), 11, 12, Appendix A. The June v0.6 architecture (classical controller, sensors, VIO, formation) is unchanged.
+
+PRIOR REVISION: Following the classical control architecture session (June 2026), v0.6 closed the sensor suite, selected a primary VIO module, defined the inter-drone ranging strategy, reframed the formation modes (box/square is the home formation; all other modes are transient obstacle-avoidance deviations), and added a new Classical Controller section recording the MATLAB draft and smoke-test results. The residual RL decision (RL pipeline §2.5) is reaffirmed. Sections updated in v0.6: 2, 4, 6.2, 7, 8 (new), 9, 11, 12.
 
 # 1. Project Overview
 
@@ -37,6 +39,8 @@ This document captures the technical decisions, architecture choices, rationale,
 | Simulator | PufferLib 4.0 Ocean drone env, extended for multi-agent FORMATION task | Confirmed (RL pipeline doc §2) |
 | gym-pybullet-drones | Held as contingency for sim-to-real fine-tune if Stage 5 transfer fails | Contingency only |
 | Training framework | PufferLib (PuffeRL trainer, PPO) | Confirmed |
+| Training execution | Modal cloud GPU — one-command build+train, checkpoint returned locally (`stirling/modal/`) | Operational — see §5.2 |
+| Training / inference precision | fp32 (default). Native backend also supports bf16 (faster) but bf16 policies do not transfer to fp32 — see §5.2 | Locked to fp32 |
 | RL algorithm | PPO with shared policy weights (CTDE) | Confirmed |
 | Control approach | Residual RL: policy emits 3-float Δv correction added to classical controller output inside c_step | Confirmed (RL pipeline §2.5) |
 | Classical controller | P + feedforward + light-I station-keeping; APF safety filter (CBF-QP upgrade path). MATLAB draft complete, smoke-tested. | Confirmed — see §8 |
@@ -114,6 +118,14 @@ Detailed pipeline lives in the RL pipeline doc. This is a high-level summary.
 ## 5.1 VIO Bring-Up
 
 VIO bring-up is treated as a discrete sub-project run in parallel with policy training. Target platform: Mighty Camera (primary) or OAK-D Lite (backup). See §9 for full VIO architecture.
+
+## 5.2 Training Execution — Modal Cloud GPU
+
+Training runs on a Modal cloud GPU via a one-command framework (`stirling/modal/`, quickstart in `stirling/modal/README.md`). `modal run stirling/modal/train_drone.py --tag <t>` compiles the native CUDA backend on the GPU (cached to a Modal Volume keyed by a hash of the C/CUDA sources, so only env-code changes recompile), trains, and returns the checkpoint to `stirling/artifacts/drone/<tag>/` — no SSH, provisioning, teardown, or file copying. Experiment knobs (reward weights, task, timesteps) are `puffer` CLI args passed through `--extra`, so sweeps never rebuild. Each run returns both the native flat-float32 `.bin` and a losslessly converted torch `.pt` (`stirling/scripts/convert_native_checkpoint.py`); the `.pt` is what evals on a developer Mac (no GPU) via `puffer eval drone --slowly`. Headless native eval renders to mp4 on the GPU (`stirling/modal/eval_video.py`) for visual checks without a local display. Stage 1 HOVER now runs end-to-end this way (train on Modal → eval on Mac); this is the execution path for Stages 1–4.
+
+### Precision policy — fp32 (load-bearing finding)
+
+The native backend can train in bf16 (≈40% faster) or fp32. A bf16-trained HOVER policy does **not** transfer to fp32: it hovers under bf16 but destabilises within ~100 steps under fp32 (ema_dist ~0.03 → ~2.6). This is not a conversion artefact — native-fp32 and torch-fp32 agree to three decimals; the exported weights are exact. The policy is simply **numerically fragile across precisions**, and the Mac/torch eval path is fp32-only. Therefore training and inference default to **fp32** (`--bf16` opts into faster Modal-only experiments). For a ~151K-parameter controller fp32 costs nothing at inference and is more portable than bf16 (universally supported on CPU/edge silicon); the only cost is the modest training slowdown. Onboard deployment must run the policy in the precision it was trained in (fp32), or the policy must first be shown robust across the target precision. The fragility itself is tracked as a sim-to-real robustness risk in §11.
 
 # 6. Policy Architecture
 
@@ -312,9 +324,16 @@ Failsafe on zero residual: zeroing the RL residual at runtime recovers the pure 
 | Reform-window reward shaping calibration | Medium | Sweep at start of Stage 3 |
 | Permutation-invariant neighbour encoding | Medium | Default sorted-ID; revisit if Stage 4 asymmetric |
 | Whether to escalate to motor-level action space | Conditional | Triggers documented in RL pipeline §2.4 |
+| Policy numerical robustness (bf16→fp32 fragility) | Medium | NEW — HOVER policy destabilises across precisions (§5.2). Symptom of a marginally-stable policy; a sim-to-real robustness signal. Add precision/perturbation robustness to the Stage 5 transfer checklist; consider robustness-promoting training (noise, precision randomisation) if it recurs at Stage 4. |
 | BOM audit — Crazyflie sunk cost / resale | Medium | Platform change |
 
-## 11.1 Items Closed Since v0.5
+## 11.1 Items Closed Since v0.6
+
+Training execution infrastructure: Modal cloud-GPU framework operational — one-command build+train+return, cached native backend, checkpoints mirrored to a Volume (§5.2). Closed this session.
+Stage 1 baseline runnable end-to-end: HOVER trains on Modal and evals on a developer Mac via the native→torch checkpoint bridge. Closed this session — see §5.2.
+Training/inference precision policy: default to fp32 after the bf16→fp32 transfer finding; `--bf16` retained for Modal-only speed experiments (§5.2). Closed this session.
+
+## 11.2 Items Closed Since v0.5
 
 Residual RL decision: classical controller mandatory as baseline/fallback/prior; policy emits 3-float Δv correction. Closed by RL pipeline doc v0.3 §2.5.
 Classical controller drafted: MATLAB files complete, smoke-tested (reform 0.60 s, sep 0.54 m). Closed this session — see §8.
@@ -328,6 +347,9 @@ Run format: A→B single traversal, ≤5 min, 2 official runs (best counts). Flo
 | Resource | URL / Reference |
 | --- | --- |
 | RL Pipeline & Environment Plan v0.3 (companion doc) | rl_pipeline_doc v0.3 — residual RL design (§2.5), env extensions, training stages, action-space rationale |
+| Modal cloud-training framework | stirling/modal/ — train_drone.py (one-command GPU train), eval_video.py (headless mp4 eval + native/torch metrics), README.md quickstart |
+| Native→torch checkpoint bridge | stirling/scripts/convert_native_checkpoint.py — lossless flat-fp32 `.bin` → torch `.pt` for Mac eval |
+| Progress log (what actually landed) | stirling/docs/progress_log.md — reverse-chronological increment record |
 | Classical Controller (MATLAB draft) | classical_controller/ folder — default_params.m, formation_tracking.m, safety_filter.m, classical_control_step.m, formation_manager.m, demo_formation.m |
 | PufferLib | github.com/PufferAI/PufferLib (4.0 branch) |
 | PufferLib drone env (origin) | github.com/tensaur/drone — Sam Turner & Finlay Sanders, MIT-licensed |
@@ -343,6 +365,8 @@ Run format: A→B single traversal, ≤5 min, 2 official runs (best counts). Flo
 | ArduPilot Guided mode | ardupilot.org/copter/docs/ac2_guidedmode.html |
 
 # Appendix A — Changelog
+
+v0.7 (July 2026): Training-execution + precision session. (1) Modal cloud-GPU training framework operational (§5.2): one-command build+train+return, runtime-compiled native backend cached to a Volume, checkpoints returned locally as native `.bin` + torch `.pt`, headless mp4 eval; Stage 1 HOVER runs end-to-end (train on Modal → eval on Mac). (2) Precision policy locked to fp32 (§2, §5.2): a bf16-trained hover policy does not transfer to fp32 (destabilises within ~100 steps) and the Mac eval path is fp32-only, so training and inference default to fp32; `--bf16` retained for Modal-only experiments. (3) New robustness risk logged (§11): bf16→fp32 fragility indicates a marginally-stable policy — added to the Stage 5 transfer checklist. No architecture (control, sensors, VIO, formation) changed.
 
 v0.6 (June 2026): Classical control session. (1) Residual RL decision reaffirmed — classical controller promoted from contingency to mandatory (§6.2). (2) Classical controller MATLAB draft added (§8): P + feedforward + light-I law, APF safety filter with closing-rate damping, CBF-QP upgrade path; smoke-tested reform 0.60 s / min sep 0.54 m. (3) Sensor suite determined (§7): IMU + camera + ESC DShot + radio broadcast essential; optical-flow + ToF + UWB strongly recommended. (4) VIO module selected (§9): Mighty Camera ($60/unit, 10 g, 15 Hz pose + 800 Hz IMU) as primary; OAK-D Lite backup; loop closure caveat noted. (5) Inter-drone relative localisation architecture defined (§9.4): radio broadcast primary, UWB strongly recommended, visual detection optional. (6) Formation reframed (§4.2): box/square = home formation; all other modes = transient obstacle-avoidance deviations. (7) Run format and floor tape anchor recorded in constraints table (§1).
 

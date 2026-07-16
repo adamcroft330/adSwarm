@@ -298,7 +298,52 @@ prop-guard collision spheres, mocap spheres for the live targets).
 
 ---
 
-## 8. Robustness to other drone parameters
+## 8. MuJoCo validation
+
+The controller is validated closed-loop in MuJoCo against full rigid-body
+dynamics — deliberately *not* the MATLAB draft's ideal velocity dynamics,
+so the numbers reflect what survives contact with a real actuator stack.
+Harness: `stirling/controller/demo_formation.py` (headless metrics +
+optional mp4); interactive viewer: `view_formation.py`.
+
+**Setup:** 4 generic 250-class quads (0.9 kg, 250 mm motor diagonal,
+TWR ≈ 3.6) behind the §7 velocity inner loop, 500 Hz physics / 100 Hz
+control, MuJoCo 3.2.5. Pure classical throughout (`dv = None`) — this is
+the Stage 3a benchmark mode, no RL residual.
+
+**Scenario:** settle into box → centroid moves off at 1 m/s → tour every
+formation mode (line → box → stack → box → compressed → box → diamond →
+box) → a 2.5 m/s lateral disturbance kick on one drone → reform.
+
+**Results (2026-07-07)** vs the tech-doc §8.4 Octave smoke-test targets:
+
+| Metric | Result | Target (§8.4) | MATLAB draft ref |
+| --- | ---: | ---: | ---: |
+| Reform after disturbance kick | **1.29 s** | < 2.0 s | 0.60 s |
+| Min inter-drone separation | **0.49 m** | ≥ 0.40 m | 0.54 m |
+| Worst formation error post-kick | 0.76 m | TBC | 0.49 m |
+| Slowest mode-transition settle | 1.68 s (→stack) | < 2.0 s | — |
+
+Both hard targets pass. The controller is slower than the MATLAB
+reference (1.29 s vs 0.60 s reform) precisely because it runs through
+full quad dynamics + a velocity inner loop rather than ideal velocity
+integration — that gap is the cost the idealised model hid, and it is
+expected. `demo_formation.py` exits non-zero if either hard target is
+violated, which is the NFR-36 unit-test gate the C port must reproduce
+(§11).
+
+Artifacts land in `stirling/artifacts/controller/`: `demo_formation.mp4`
+(render), `demo_metrics.json`, `demo_metrics.png` (error + separation
+traces). The mp4 is regenerable and not tracked.
+
+**Caveat — scope of this validation.** It is a single nominal run with
+generic constants: no sensor noise, wind, latency, or actuator limits
+beyond thrust saturation, and no parameter sweep. It establishes "works
+for generic 250-class params in clean sim," not robustness — see §9.
+
+---
+
+## 9. Robustness to other drone parameters
 
 This is the key question for reuse, and the layered split answers it:
 
@@ -332,16 +377,16 @@ the geometric params (`box_side`, `d_act`, `v_max`) rescaled. None of
 these are in the tracking *law* — they're inner-loop or geometry
 choices.
 
-**Not yet tested:** the validation (§ README) is a single nominal run
-with generic constants and no sensor noise, wind, latency, or actuator
-limits beyond thrust saturation. Robustness *claims* beyond "works for
-generic 250-class params in clean sim" need a parameter sweep (mass /
-TWR / inertia) and domain randomisation — that's Stage-3b / Stage-5
-work, not established here.
+**Not yet tested:** the validation (§8) is a single nominal run with
+generic constants and no sensor noise, wind, latency, or actuator limits
+beyond thrust saturation. Robustness *claims* beyond "works for generic
+250-class params in clean sim" need a parameter sweep (mass / TWR /
+inertia) and domain randomisation — that's Stage-3b / Stage-5 work, not
+established here.
 
 ---
 
-## 9. Timing
+## 10. Timing
 
 - **Outer (this controller):** 100 Hz (`CTRL_DT = 0.01`), matching the
   env's control rate.
@@ -354,7 +399,7 @@ quasi-static to the attitude loop.
 
 ---
 
-## 10. Parameter reference
+## 11. Parameter reference
 
 All in `default_params.py`. Tune in the spec's §8.5 order: (1) inner
 velocity loop, (2) `Kp`/`Ki`, (3) safety-filter params, (4) only then
@@ -380,7 +425,7 @@ the RL residual.
 
 ---
 
-## 11. Path to the C port (Stage 3, task b)
+## 12. Path to the C port (Stage 3, task b)
 
 Everything in the six core modules is array arithmetic with **no solver
 dependency** — the deliberate reason APF was chosen over CBF-QP. The map
@@ -398,7 +443,7 @@ into the env:
   criteria — reform ≤ 2.0 s, min separation ≥ 0.40 m — as a unit test
   before Stage 3 proceeds past 3a.
 
-## 12. References
+## 13. References
 
 - `drone_project_docs_v0_6.md` §4 (formation architecture), §8
   (classical controller spec, tuning order, smoke-test targets)
