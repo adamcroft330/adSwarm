@@ -1,7 +1,7 @@
 #include "drone.h"
 #include "render.h"
 
-#define OBS_SIZE 23
+#define OBS_SIZE DRONE_OBS_SIZE // 41; layout documented in dronelib.h
 #define NUM_ATNS 4
 #define ACT_SIZES {1, 1, 1, 1}
 #define OBS_TENSOR_T FloatTensor

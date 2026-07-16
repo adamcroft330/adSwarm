@@ -17,7 +17,7 @@
 // render.h provides this in the real build; stub it for the headless test.
 void c_close_client(Client* client) { (void)client; }
 
-#define OBS 23
+#define OBS DRONE_OBS_SIZE
 
 static DroneEnv* make_env(int n, int control_mode, float k_res) {
     DroneEnv* env = calloc(1, sizeof(DroneEnv));
@@ -474,6 +474,119 @@ static int test_formation_task_in_env(void) {
     return ok;
 }
 
+// --- Task (d) tests: the extended observation vector ------------------------
+
+// Test 11: obs layout and invariants. Checks the width, that RPMs are still
+// LAST (an upstream invariant the plan calls out), that every element is
+// bounded, that neighbours are real at num_agents=4 and absent at 1, that the
+// mode one-hot is one-hot only under FORMATION, and that u_classic is zero on
+// the native motor path but live under velocity control.
+static int test_obs_layout(void) {
+    int ok = 1;
+
+    // Width is derived, not hardcoded: 19 base + 9 neighbour + 5 mode + 1
+    // timer + 3 u_classic + 4 rpm.
+    if (DRONE_OBS_SIZE != 41) {
+        printf("[obs layout] DRONE_OBS_SIZE=%d, expected 41  -> FAIL\n", DRONE_OBS_SIZE);
+        ok = 0;
+    }
+    const int I_NEIGH = OBS_BASE;                    // 19
+    const int I_MODE = I_NEIGH + 3 * OBS_N_NEIGHBORS; // 28
+    const int I_TTM = I_MODE + OBS_N_FORM_MODES;      // 33
+    const int I_UC = I_TTM + 1;                       // 34
+    const int I_RPM = I_UC + 3;                       // 37
+
+    // --- FORMATION with a full 4-drone swarm: neighbours must be real.
+    DroneEnv* env = make_env(4, CONTROL_MODE_VELOCITY, 0.0f);
+    env->task = FORMATION;
+    c_reset(env);
+    // Pin a known geometry: agent 0 at origin, identity attitude, agent 1 at
+    // +1 m along body x. Its neighbour block must lead with tanh(1*0.5).
+    for (int i = 0; i < 4; i++) {
+        env->agents[i].state.quat = (Quat){1, 0, 0, 0};
+        env->agents[i].state.pos = (Vec3){(float)i, 0.0f, 0.0f};
+    }
+    compute_observations(env);
+    float* o = env->observations; // agent 0
+
+    int neigh_ok = fabsf(o[I_NEIGH + 0] - tanhf(1.0f * OBS_NEIGHBOR_SCALE)) < 1e-5f
+                && fabsf(o[I_NEIGH + 1]) < 1e-6f && fabsf(o[I_NEIGH + 2]) < 1e-6f
+                && fabsf(o[I_NEIGH + 3] - tanhf(2.0f * OBS_NEIGHBOR_SCALE)) < 1e-5f
+                && fabsf(o[I_NEIGH + 6] - tanhf(3.0f * OBS_NEIGHBOR_SCALE)) < 1e-5f;
+    if (!neigh_ok) {
+        printf("[obs layout] neighbour block wrong: %.4f %.4f %.4f (expected %.4f 0 0)\n",
+               o[I_NEIGH], o[I_NEIGH + 1], o[I_NEIGH + 2], tanhf(0.5f));
+        ok = 0;
+    }
+
+    // Mode one-hot: exactly one hot, and it is box (the Stage 3 held mode).
+    float hot = 0.0f;
+    for (int m = 0; m < OBS_N_FORM_MODES; m++) hot += o[I_MODE + m];
+    int mode_ok = (fabsf(hot - 1.0f) < 1e-6f) && (o[I_MODE + FORM_BOX] == 1.0f);
+    // No scheduler in Stage 3 -> timer saturates at "far away".
+    int ttm_ok = o[I_TTM] > 0.99f;
+
+    // RPMs last: must equal state.rpms / max_rpm.
+    int rpm_ok = 1;
+    for (int k = 0; k < 4; k++) {
+        float want = env->agents[0].state.rpms[k] / env->agents[0].params.max_rpm;
+        if (fabsf(o[I_RPM + k] - want) > 1e-6f) rpm_ok = 0;
+    }
+
+    // Everything bounded and finite, for all agents.
+    int bounded = 1;
+    for (int i = 0; i < 4 * DRONE_OBS_SIZE; i++)
+        if (!isfinite(env->observations[i]) || fabsf(env->observations[i]) > 1.0f + 1e-5f) bounded = 0;
+
+    // u_classic is live under velocity control. Put the drones back on their
+    // slots first: the pinned geometry above sits far from the (randomly
+    // placed) centroid, which would trip the oob reset and zero u_classic
+    // before the observation is built.
+    for (int i = 0; i < 4; i++) {
+        env->agents[i].state.pos = env->agents[i].target->pos;
+        env->agents[i].state.vel = env->agents[i].target->vel;
+    }
+    c_step(env);
+    int uc_live = 0;
+    for (int k = 0; k < 3; k++) if (fabsf(env->observations[I_UC + k]) > 1e-6f) uc_live = 1;
+    free(env);
+
+    // --- num_agents=1: no neighbours -> the block is zeros (the Stage 3a
+    // benchmark config; the plan's "stub as zeros", with no stub).
+    DroneEnv* solo = make_env(1, CONTROL_MODE_VELOCITY, 0.0f);
+    solo->task = FORMATION;
+    c_reset(solo);
+    compute_observations(solo);
+    int solo_zero = 1;
+    for (int k = 0; k < 3 * OBS_N_NEIGHBORS; k++)
+        if (solo->observations[I_NEIGH + k] != 0.0f) solo_zero = 0;
+    free(solo);
+
+    // --- HOVER on the native motor path: no formation, no classical law.
+    DroneEnv* hov = make_env(4, CONTROL_MODE_MOTOR, 0.0f);
+    c_step(hov);
+    int hover_mode_zero = 1;
+    for (int m = 0; m < OBS_N_FORM_MODES; m++)
+        if (hov->observations[I_MODE + m] != 0.0f) hover_mode_zero = 0;
+    if (hov->observations[I_TTM] != 0.0f) hover_mode_zero = 0;
+    int uc_zero_motor = 1;
+    for (int k = 0; k < 3; k++)
+        if (hov->observations[I_UC + k] != 0.0f) uc_zero_motor = 0;
+    free(hov);
+
+    ok = ok && neigh_ok && mode_ok && ttm_ok && rpm_ok && bounded && uc_live && solo_zero
+         && hover_mode_zero && uc_zero_motor;
+    printf("[obs layout] width=%d  neighbours(n=4)=%s  neighbours(n=1)=zeros:%s  one-hot=%s  "
+           "timer=%s\n",
+           DRONE_OBS_SIZE, neigh_ok ? "ok" : "BAD", solo_zero ? "y" : "N", mode_ok ? "ok" : "BAD",
+           ttm_ok ? "ok" : "BAD");
+    printf("[obs layout] rpms-last=%s  bounded=%s  u_classic live/motor-zero=%s/%s  "
+           "hover mode+timer zero=%s  -> %s\n",
+           rpm_ok ? "ok" : "BAD", bounded ? "ok" : "BAD", uc_live ? "ok" : "BAD",
+           uc_zero_motor ? "ok" : "BAD", hover_mode_zero ? "ok" : "BAD", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     // Gate mode: `test_velocity_wrapper <k_mot>` runs only the NFR-36 formation
     // gate at the given motor time constant and returns its verdict as the exit
@@ -497,6 +610,9 @@ int main(int argc, char** argv) {
     pass &= test_formation_blend();
     pass &= test_formation_feedforward_consistency();
     pass &= test_formation_task_in_env();
+
+    printf("--- task (d): extended observation vector ---\n");
+    pass &= test_obs_layout();
 
     // Why the cascade is tuned the way it is. The control law is identical in
     // every row — only the platform's motor time constant moves. BASE_K_MOT was

@@ -7,6 +7,81 @@ this records what actually landed.
 
 ---
 
+## 2026-07-16 — Observation extension 23 → 41 (task d); `num_drones=4` is the FORMATION config
+
+Stage 3 tasks (a)–(d) are now done. Next is (f), the Stage 3a classical
+benchmark.
+
+### Obs layout (`dronelib.h`, single source of truth)
+
+`DRONE_OBS_SIZE` is now derived, and `binding.c`'s `OBS_SIZE` and the Python
+policy's input dim both follow it (`vec.obs_size` ← `get_obs_size()`), so no
+hardcoded width remains anywhere.
+
+| Index | Content |
+| --- | --- |
+| 0–18 | unchanged upstream block (body vel, omega, quat, two-scale target offset, target normal) |
+| 19–27 | 3 neighbour relative positions, body frame, by agent index |
+| 28–32 | formation mode one-hot |
+| 33 | time to next mode change, tanh-scaled |
+| 34–36 | `u_classic`, body frame — the baseline the residual corrects (§2.5) |
+| 37–40 | motor RPMs — **still last** (upstream invariant) |
+
+Neighbours needed their own tanh scale (0.5): they live on a 0.4–3 m scale and
+the target's coarse 0.1 is tuned for the 30 m grid, which would squash them to
+near zero. `u_classic` is stored on `Drone` by `velocity_control_step` and
+normalised by the setpoint saturation; it stays zero on the native motor path,
+where no classical law runs, which is honest rather than a stub.
+
+**Existing checkpoints no longer load** — the policy's input dim changed 23 →
+41. Expected; the Stage 1 baseline was already retired.
+
+### `num_drones` is per-env packing, not throughput — FORMATION needs 4
+
+The plan called for stubbing neighbours as zeros in Stage 3 and wiring real
+ones in Stage 4. That turned out to be unnecessary, and chasing it surfaced a
+config defect worth recording.
+
+`vecenv.h`'s `my_vec_init` spawns env instances **until `total_agents` is
+reached**. So `total_agents = 2048` is the throughput knob; `num_drones` only
+sets how many drones share one `DroneEnv` — i.e. one formation, one APF
+neighbourhood. Upstream ships `num_drones = 64` because HOVER treats every
+drone as an independent episode, so packing is free. For FORMATION it is not:
+one env holds one formation, so 64 drones alias 16-to-a-slot. Measured, before
+the guard landed:
+
+| `num_drones` | coincident target pairs | min separation over 4 s |
+| ---: | ---: | ---: |
+| 4 | 0 | 0.583 m |
+| 16 | 24 | 0.178 m ✗ |
+| 64 | 480 | 0.052 m ✗ |
+
+`num_drones = 4` costs nothing — it yields 512 env instances instead of 32, at
+the same 2048 agents. And since the swarm **is** 4 drones (tech doc §2), a
+drone has exactly 3 neighbours: every other agent in its env. So the neighbour
+block needs no stub — the same code gives zeros at `num_agents = 1` (the
+Stage 3a benchmark config) and real neighbours at 4 (Stage 4), with no rewrite.
+
+`c_reset` now **hard-errors** if `task=formation` and `num_drones > 4`, rather
+than training on aliased slots. Verified: 1 and 4 reset cleanly, 64 exits 1
+with the config fix in the message.
+
+**Consequence for (f)/(g):** the FORMATION runs need `task = 8` and
+`num_drones = 4`; `config/drone.ini` still carries the HOVER values
+(`task = 1`, `num_drones = 64`). Not changed here — that is (f)'s call.
+
+### Tests
+
+One new gate covering the layout: width, RPMs-last, bounded/finite across all
+agents, real neighbour geometry at `num_agents=4` vs zeros at 1, one-hot only
+under FORMATION, and `u_classic` live under velocity control but zero on the
+motor path. Two `_Static_assert`s pin the constants that must mirror across
+headers (`OBS_N_FORM_MODES` ↔ `FORM_MODE_N`, `OBS_V_MAX` ↔ `VC_V_MAX`) — the
+include direction (`velocity_controller.h` → `dronelib.h`) prevents referencing
+them directly.
+
+---
+
 ## 2026-07-16 — FORMATION task (task c): formation manager C port + moving-centroid task
 
 Ported `stirling/controller/formation_manager.py` into `ocean/drone/tasks.h`

@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "dronelib.h"
@@ -99,8 +100,14 @@ void add_log(DroneEnv* env, int idx, bool oob, bool timeout) {
 }
 
 void compute_observations(DroneEnv* env) {
+    // Formation context is shared by every agent in the env; -1 tells the
+    // builder this is not the FORMATION task (mode one-hot / timer read zero).
+    int mode = (env->task == FORMATION) ? (int)env->formation.mode : -1;
+    float ttm = (env->task == FORMATION) ? formation_time_to_mode_change(&env->formation) : 0.0f;
+
     for (int i = 0; i < env->num_agents; i++) {
-        compute_drone_observations(&env->agents[i], env->observations + i*23);
+        compute_drone_observations(&env->agents[i], env->agents, env->num_agents, i, mode, ttm,
+                                   env->observations + i * DRONE_OBS_SIZE);
     }
 }
 
@@ -140,6 +147,20 @@ void c_reset(DroneEnv* env) {
         reset_rings(&env->rng, env->ring_buffer, env->max_rings);
     }
     if (env->task == FORMATION) {
+        // The swarm is 4 drones (tech doc §2) and an env holds exactly one
+        // formation, so num_agents > FM_N_SLOTS would alias several drones
+        // onto the same slot — coincident targets that the APF then fights.
+        // Throughput does not need packing here: vecenv spawns envs until
+        // total_agents is reached, so num_drones=4 gives 4x more envs at the
+        // same agent count. Fail loudly rather than train on a broken task.
+        if (env->num_agents > FM_N_SLOTS) {
+            fprintf(stderr,
+                    "drone: task=formation requires num_drones <= %d (the swarm size), got %d.\n"
+                    "       Each env holds one formation; extra drones would share slots.\n"
+                    "       Set num_drones=4 in config — total_agents still sets throughput.\n",
+                    FM_N_SLOTS, env->num_agents);
+            exit(1);
+        }
         formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
     }
 

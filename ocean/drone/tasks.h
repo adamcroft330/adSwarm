@@ -74,6 +74,10 @@ typedef enum {
 static char const* FORMATION_MODE_NAMES[FORM_MODE_N] = {"box", "line", "stack", "compressed",
                                                         "diamond"};
 
+// The observation builder emits a mode one-hot but cannot see this enum
+// (dronelib.h is included by this header, not the reverse).
+_Static_assert(FORM_MODE_N == OBS_N_FORM_MODES, "OBS_N_FORM_MODES (dronelib.h) must track FORM_MODE_N");
+
 FormationMode get_formation_mode(char* mode_name) {
     for (size_t i = 0; i < FORM_MODE_N; i++) {
         if (strcasecmp(FORMATION_MODE_NAMES[i], mode_name) == 0) {
@@ -138,6 +142,13 @@ FormationMode get_formation_mode(char* mode_name) {
 // "no transition in progress" (the reference's -inf).
 #define FM_NO_BLEND (-1.0e9f)
 
+// Sentinel for Formation.next_mode_t: no mode change is scheduled. Stage 3 has
+// no scheduler (mode is held at box), so this is always the case for now and
+// the corresponding observation saturates at "far away". The Stage 4 scheduler
+// sets next_mode_t and calls formation_set_mode() when the clock reaches it.
+#define FM_NO_SCHEDULE (1.0e9f)
+#define FM_T_HORIZON 100.0f // reported time-to-change when nothing is scheduled [s]
+
 typedef struct {
     Vec3 pos;       // virtual formation centre [m]
     Vec3 vel;       // centroid velocity [m/s]
@@ -149,10 +160,11 @@ typedef struct {
     Centroid centroid;
     FormationMode mode;
     FormationMode prev_mode;
-    float blend_t0; // formation-clock time the current transition started [s]
-    float t;        // formation clock [s]
-    Vec3 waypoint;  // current centroid waypoint [m]
-    float speed;    // cruise speed [m/s]
+    float blend_t0;    // formation-clock time the current transition started [s]
+    float t;           // formation clock [s]
+    float next_mode_t; // clock time of the next scheduled mode change, or FM_NO_SCHEDULE
+    Vec3 waypoint;     // current centroid waypoint [m]
+    float speed;       // cruise speed [m/s]
 } Formation;
 
 // Formation-frame slot offsets (x forward, y left, z up).
@@ -209,6 +221,13 @@ static inline float formation_blend_alpha(const Formation* f) {
     return clampf((f->t - f->blend_t0) / FM_BLEND_TIME, 0.0f, 1.0f);
 }
 
+// Seconds until the next scheduled mode change, saturating at FM_T_HORIZON
+// when none is scheduled (always, until the Stage 4 scheduler lands).
+static inline float formation_time_to_mode_change(const Formation* f) {
+    if (f->next_mode_t >= FM_NO_SCHEDULE) return FM_T_HORIZON;
+    return fmaxf(0.0f, fminf(f->next_mode_t - f->t, FM_T_HORIZON));
+}
+
 void formation_set_mode(Formation* f, FormationMode mode) {
     if (mode == f->mode) return;
     f->prev_mode = f->mode;
@@ -248,6 +267,7 @@ void formation_reset(Formation* f, unsigned int* rng, float speed) {
     f->mode = FORM_BOX;
     f->prev_mode = FORM_BOX;
     f->blend_t0 = FM_NO_BLEND;
+    f->next_mode_t = FM_NO_SCHEDULE;
     f->speed = (speed > 0.0f) ? speed : FM_CRUISE_SPEED;
     f->centroid.pos = (Vec3){rndf(-FM_MARGIN_X, FM_MARGIN_X, rng), rndf(-FM_MARGIN_Y, FM_MARGIN_Y, rng),
                              rndf(-FM_MARGIN_Z, FM_MARGIN_Z, rng)};
