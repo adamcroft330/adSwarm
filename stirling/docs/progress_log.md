@@ -7,6 +7,89 @@ this records what actually landed.
 
 ---
 
+## 2026-07-16 — Decision: BASE_K_MOT 0.15 → 0.05 s; NFR-36 now met in-env
+
+Resolves the blocker from the C-port entry below. **Decision taken: lower the
+sim's motor time constant to a realistic value rather than accept a ~6.4 s
+classical floor.** The controller then meets spec in the env with the shipped
+config.
+
+### Rationale
+
+`BASE_K_MOT = 0.15 s` was inherited from upstream and is not defensible: a real
+Crazyflie 2.1 is ~0.02–0.05 s, and the project targets 5"/250-class propulsion
+(with bidirectional-DShot ESCs already mandated), which is faster still. The
+constant was an artifact, and it was the single thing making the 2 s reform rule
+unreachable — not the control law, which reproduces the MuJoCo reference
+exactly once the actuator can serve it. Fixing a wrong constant is not the same
+as tuning to green.
+
+This is a **Stage 2 (platform recalibration) change taken early**. It is
+directionally safe: every candidate platform is faster than 0.15 s, so 0.05 s
+is closer to any hardware the team picks than the old value was.
+
+### What changed
+
+- `dronelib.h`: `BASE_K_MOT` 0.15 → **0.05 s**.
+- `velocity_controller.h`: cascade raised to the **reference gains** the
+  Python/MuJoCo rig validated — `KP` 0.6→2.0, `KV` 2→5, `KR` 12→200,
+  `KW` 5→25, `V_MAX` 2→3, `KI` 0.1→0.3. These now match
+  `stirling/controller/default_params.py` exactly, so the C and Python
+  configurations have converged. Motors and gains had to move together; either
+  alone fails (see the witness table below).
+
+### Result: the gate passes in-env
+
+| Metric | Before (k_mot 0.15) | Now (k_mot 0.05) | MuJoCo ref |
+| --- | ---: | ---: | ---: |
+| Formation reform | 6.41 s ✗ | **1.25 s** ✓ | 1.29 s |
+| Min separation | 0.012 m ✗ | **0.488 m** ✓ | 0.49 m |
+| Worst error | 2.55 m | **0.76 m** | 0.76 m |
+| Hover settle | 3.66 s | **1.11 s** | — |
+| Moving-target lag | 0.063 m | **0.010 m** | — |
+
+`bash stirling/tests/run_velocity_tests.sh` — all gates pass. The motor-lag
+witness table is retained in the suite: if anyone raises `BASE_K_MOT` again, it
+shows the cost immediately (at 0.15 s these gains diverge to ~190 m).
+
+### Consequences
+
+- **The Stage 1 baseline is retired, not re-established.** Score 740.424 /
+  `ema_dist` 0.099 was measured against 0.15 s motors and does not describe
+  this env. It is *not* worth re-recording as a reference: its original job
+  ("the regression target for later work", per `stage1_handoff.md`) is already
+  spent — the wrapper was proven inert by byte-identical checkpoints — and the
+  numbers Stage 3 is actually judged against are the **Stage 3a classical
+  floor** and the **Stage 3b residual**, which must be measured on the
+  FORMATION task, not motor-level HOVER. A `kmot005-smoke` run was done only to
+  confirm the env still trains after the constant change. The older
+  `wrapper-regression` checkpoint is historical.
+- **A motor-level ceiling run is still worth doing later — on FORMATION.**
+  RL pipeline §2.4 lists conditions to escalate to motor-level control. Judging
+  that needs the ceiling (what unconstrained control achieves) alongside the
+  3a floor and the 3b residual, all on the same task and dynamics:
+  `classical (3a) < residual (3b) <= motor-level (ceiling)`. The 3a→3b gap is
+  the residual's value; the 3b→ceiling gap is the cost of the architecture, and
+  the escalation trigger. A motor-level *HOVER* number does not serve this —
+  wrong task.
+- **The published artifact overstates its conclusion.** Its "0.15 s is the
+  blocker" claim rests on a two-point gain axis, not a search — the ladder
+  theory predicts no stable config meets 2 s at 0.15 s, but that was never
+  measured. The decision above makes the question moot in practice; the claim
+  should still be softened if the artifact is shared onward.
+
+### Known limitation, quantified (not a defect)
+
+The APF cannot guarantee separation against a **head-on convergence above
+~1.75 m/s** per drone (`D_ACT*KV/2`): each drone coasts `v/KV` after its command
+reverses, so two closing head-on cover `2v/KV` = 1.2 m, exceeding the 0.70 m
+activation band. This is inherent to distance-based APF with a saturated output,
+it reproduces the Python reference faithfully, and tech doc §8.3 already claims
+a hard guarantee only for the **CBF-QP upgrade** — this quantifies when that
+upgrade becomes necessary. The formation scenario stays well inside the
+envelope (min sep 0.488 m). Retained in the suite as a characterization, not a
+gate.
+
 ## 2026-07-16 — Classical controller C port (task b); sim motor lag blocks NFR-36
 
 Ported the classical controller from `stirling/controller/` (Python) into

@@ -30,48 +30,53 @@
 #define CONTROL_MODE_MOTOR 0 // native 4-float motor actions (Stage 1 path)
 #define CONTROL_MODE_VELOCITY 1 // velocity-setpoint stack (Stage 3 path)
 
-// --- Cascade gains, tuned for the sim's Crazyflie constants and its slow
-//     k_mot=0.15 s motor lag. Loop bandwidths are deliberately separated
-//     ~3x per layer (position << velocity << attitude << motor) so the
-//     stack is well-damped; the motor lag caps attitude at ~3 rad/s, which
-//     sets the whole ladder. Retune on Stage 2 platform recalibration. -----
+// --- Cascade gains. These match stirling/controller/default_params.py, the
+//     configuration validated in MuJoCo (reform 1.29 s, min sep 0.49 m).
+//
+//     Loop bandwidths are separated per layer so the stack stays damped:
+//         position (KP=2)  <  velocity (KV=5)  <  attitude (sqrt(KR)=14.1)
+//                                              <  motor (1/k_mot=20 rad/s)
+//     Each rung is capped by the one below it, so the platform's motor time
+//     constant propagates all the way up to "can it reform in 2 s". The
+//     env previously shipped BASE_K_MOT=0.15 s, which forced a detune to
+//     KP=0.6/KV=2 and made the 2 s rule unreachable; with a realistic 0.05 s
+//     the reference cascade is supportable. See progress_log.md.
+//
+//     KR and KW must move together: sqrt(KR) sets the attitude natural
+//     frequency and KW sets its damping (zeta = KW / (2*sqrt(KR)) = 0.88).
+//     Raising KR alone just makes it ring.
+//
+// Each gain is -D-overridable so stirling/tests/ can sweep the cascade
+// without editing this header — the seam a platform re-tune uses.
 // Outer classical law (tech doc §8.2), velocity-setpoint space:
 //     u = KFF*v_target + KP*e + KI*integ
-// NOTE: KP is capped low by the sim's sluggish k_mot=0.15 s motors — KP=1.0
-// already overshoots. 0.6 is the stable ceiling here, well under the spec's
-// nominal KP=2.0 (which assumes the fast inner loop of the MuJoCo 250-class
-// rig, kv=5). Reform *speed* is the residual RL's job (Stage 3b) and Stage
-// 2's real platform (faster motors) will lift this ceiling.
-// Each gain is -D-overridable so the platform sweep in
-// stirling/tests/test_velocity_wrapper.c can retune the whole cascade without
-// editing this header — and so Stage 2 recalibration has a clean seam.
 #ifndef VC_KFF
 #define VC_KFF 1.0f   // target-velocity feedforward (prevents lag on a moving target)
 #endif
 #ifndef VC_KP
-#define VC_KP 0.6f    // position P gain [1/s] (~0.6 rad/s, tau ~1.7 s)
+#define VC_KP 2.0f    // position P gain [1/s] (tau ~0.5 s; spec §8.2 nominal)
 #endif
 #ifndef VC_KI
-#define VC_KI 0.1f    // light integral [1/s^2]; kept well under KP (spec ratio ~0.15)
+#define VC_KI 0.3f    // light integral [1/s^2]; kept well under KP
 #endif
 #ifndef VC_I_LIMIT
 #define VC_I_LIMIT 0.5f // per-axis integrator clamp [m*s]
 #endif
 #ifndef VC_V_MAX
-#define VC_V_MAX 2.0f // velocity-setpoint saturation [m/s]
+#define VC_V_MAX 3.0f // velocity-setpoint saturation [m/s]
 #endif
 // Inner loop:
 #ifndef VC_KV
-#define VC_KV 2.0f              // velocity P gain [1/s] (~3x above position)
+#define VC_KV 5.0f              // velocity P gain [1/s] (~2.5x above position)
 #endif
 #ifndef VC_TILT_MAX
 #define VC_TILT_MAX 0.6109f     // 35 deg max commanded tilt
 #endif
 #ifndef VC_KR
-#define VC_KR 12.0f             // attitude P [1/s^2] (wn ~3.5 rad/s)
+#define VC_KR 200.0f            // attitude P [1/s^2] (wn = sqrt(KR) ~14.1 rad/s)
 #endif
 #ifndef VC_KW
-#define VC_KW 5.0f              // attitude D [1/s] (damping ~0.72)
+#define VC_KW 25.0f             // attitude D [1/s] (zeta = KW/(2*sqrt(KR)) ~0.88)
 #endif
 #define VC_THRUST_FLOOR 0.3f    // min collective, fraction of hover thrust
 #define VC_THRUST_CEIL 0.95f    // max collective, fraction of max total
