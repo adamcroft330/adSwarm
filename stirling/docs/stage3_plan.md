@@ -14,9 +14,9 @@ of the Stage 1 baseline.
 > | Blocker: classical controller source missing | **Resolved** — reconstructed in `stirling/controller/`, MuJoCo-validated |
 > | (a) velocity-setpoint wrapper | **Done, merged** (PR #4). Proven inert at `control_mode=0` by byte-identical checkpoints |
 > | (b) classical controller C port | **Done** — `ocean/drone/velocity_controller.h`. NFR-36 passes in-env: reform 1.25 s, min sep 0.488 m (MuJoCo ref 1.29 / 0.49) |
-> | (c) FORMATION task | Not started — next |
-> | (d) observation extension | Not started |
-> | (f) Stage 3a benchmark / (g) 3b residual | Blocked on (c)/(d) |
+> | (c) FORMATION task | **Done** — `FORMATION` in `tasks.h`: 5-mode slot geometry, Rz(yaw) rotation, blend, 3-part feedforward velocity, waypoint-cursor centroid. In-env cruise tracking 0.073 m |
+> | (d) observation extension | Not started — next |
+> | (f) Stage 3a benchmark / (g) 3b residual | Blocked on (d) |
 >
 > Two deviations from this doc worth knowing:
 >

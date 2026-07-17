@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 3 velocity-controller test suite (tasks a + b).
+# Stage 3 velocity-controller test suite (tasks a + b + c).
 #
 #   bash stirling/tests/run_velocity_tests.sh
 #
@@ -12,6 +12,10 @@
 #   - APF repulsion reaches its analytic equilibrium
 #   - NFR-36: formation reform < 2.0 s, min separation >= 0.40 m, matching the
 #     Python/MuJoCo reference (1.29 s / 0.49 m / 0.76 m worst error)
+#   - FORMATION task: slot geometry matches the reference for all 5 modes,
+#     mode-transition blend is exact, v_target equals d(p_target)/dt across
+#     cruise/turn/blend (the KFF invariant), and the in-env task holds cruise
+#     tracking + the separation floor
 #
 # Also printed (not gates):
 #   - APF envelope: where distance-based APF stops holding and CBF-QP (§8.3)
