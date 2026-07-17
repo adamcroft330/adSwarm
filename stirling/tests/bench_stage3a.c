@@ -63,6 +63,7 @@ static DroneEnv* make_env(int idx, int num_drones) {
     // deviations are legal only to clear an obstacle. The env has no obstacles
     // until Stage 4, so nothing may legally leave box — this is the task.
     env->formation_modes = 0;
+    env->formation_speed = FM_CRUISE_SPEED; // the swept knee, 2.0 m/s
     env->control_mode = CONTROL_MODE_VELOCITY;
     env->k_res = 0.0f; // pure classical: actions ignored
     env->rng = idx;    // vecenv seeds envs by index

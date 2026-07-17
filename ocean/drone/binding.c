@@ -45,6 +45,8 @@ void my_init(Env* env, Dict* kwargs) {
     env->separation_terminates = separation_terminates ? (int)separation_terminates->value : 0;
     DictItem* formation_modes = dict_get_unsafe(kwargs, "formation_modes");
     env->formation_modes = formation_modes ? (int)formation_modes->value : 0;
+    DictItem* formation_speed = dict_get_unsafe(kwargs, "formation_speed");
+    env->formation_speed = formation_speed ? (float)formation_speed->value : FM_CRUISE_SPEED;
     init(env);
 }
 

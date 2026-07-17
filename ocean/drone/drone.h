@@ -76,6 +76,11 @@ struct DroneEnv {
     // obstacles until Stage 4. 1: run the timer-driven scheduler, which is a
     // validation fixture only. See config/drone.ini and tasks.h.
     int formation_modes;
+    // Centroid cruise speed [m/s]. This is a real performance choice, not a
+    // constant: the competition scores course time as heavily as formation
+    // accuracy (6 pts each), and the classical controller has no speed policy
+    // at all — it flies at whatever this says. Swept in progress_log.md.
+    float formation_speed;
 };
 
 void init(DroneEnv* env) {
@@ -186,7 +191,7 @@ void c_reset(DroneEnv* env) {
                     FM_N_SLOTS, env->num_agents);
             exit(1);
         }
-        formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+        formation_reset(&env->formation, &env->rng, env->formation_speed);
         if (!env->formation_modes) env->formation.next_mode_t = FM_NO_SCHEDULE;
     }
 

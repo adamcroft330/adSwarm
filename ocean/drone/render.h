@@ -469,7 +469,7 @@ void c_render(DroneEnv* env) {
             reset_rings(&env->rng, env->ring_buffer, env->max_rings);
         }
         if (env->task == FORMATION) {
-            formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+            formation_reset(&env->formation, &env->rng, env->formation_speed);
             // Slots are wherever the centroid is; without this the drones keep
             // their old positions and are instantly oob (see progress_log).
             for (int i = 0; i < env->num_agents; i++) {

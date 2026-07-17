@@ -165,11 +165,52 @@ _Static_assert(FM_MODE_DWELL_MIN > FM_BLEND_TIME,
                "mode dwell must exceed blend time, or a blend can be interrupted mid-flight");
 
 // Centroid path planner (Stage 3: a rule-based waypoint cursor).
+// Default centroid cruise speed [m/s]. Overridable per-run via
+// DroneEnv.formation_speed / --env.formation-speed.
+//
+// 2.2 is a measured choice, not a guess — the competition scores course time as
+// heavily as formation accuracy (6 pts each), and the classical controller has
+// no speed policy, so this constant *is* its race pace. The old 1.0 was
+// arbitrary and left more than half the achievable speed on the table.
+//
+// Swept on the classical controller (progress_log.md 2026-07-17). Accuracy and
+// separation are NOT what limits speed — with a trackable centroid, worst-case
+// error is flat at ~0.38 m and nothing breaches the floor anywhere in range.
+// The limit is NFR-36: the reform has to fit in the correction authority left
+// under VC_V_MAX (3.0) after cruising, and it falls off a cliff:
+//
+//   speed   perf   flight_sep  worst_err   reform->box   authority
+//    1.0   0.981     1.165       0.350       1.66 s        2.0
+//    2.0   0.943     1.166       0.378       1.63 s        1.0
+//    2.2   0.932     1.166       0.380       1.61 s        0.8   <- shipped
+//    2.4   0.925     1.064       0.382       1.61 s        0.6   <- in spec
+//    2.6   0.918     0.977       0.378       2.15 s ✗      0.4   <- fails NFR-36
+//    2.8   0.885     0.606       0.785       4.05 s ✗      0.2
+//
+// 2.4 is the fastest in-spec fixed speed, but 2.2 is shipped: it is two steps
+// from the 2.6 cliff rather than one, costs 7% throughput, and leaves 0.8 m/s
+// of authority — which the Stage 3b residual also has to fit inside, since it
+// is added before the VC_V_MAX clip. It still more than doubles the throughput
+// of the old default.
 #ifndef FM_CRUISE_SPEED
-#define FM_CRUISE_SPEED 1.0f // centroid cruise speed [m/s]
+#define FM_CRUISE_SPEED 2.2f
 #endif
 #ifndef FM_ARRIVE_GAIN
 #define FM_ARRIVE_GAIN 1.0f // decelerate into a waypoint at this rate [1/s]
+#endif
+// Centroid acceleration limit [m/s^2]. The centroid is a reference trajectory,
+// and an unbounded one is not trackable: without this the velocity *vector*
+// steps discontinuously at every waypoint capture (the direction flips, and
+// the arrival ease-in's low speed jumps straight back to cruise), which the
+// tracker can only chase. That showed up as excursions of 1.2 m — the width of
+// the whole box — at 2 m/s. The MuJoCo reference ramps its centroid for the
+// same reason.
+//
+// 2.0 m/s^2 is gentle for the platform (tilt_max 35 deg allows g*tan(35) =
+// 6.9), and consistent with FM_ARRIVE_GAIN: the ease-in's peak deceleration is
+// FM_ARRIVE_GAIN * speed, i.e. 2.0 m/s^2 at a 2 m/s cruise.
+#ifndef FM_ACCEL_MAX
+#define FM_ACCEL_MAX 2.0f
 #endif
 #ifndef FM_WP_TOL
 #define FM_WP_TOL 0.5f // waypoint capture radius [m]
@@ -415,14 +456,29 @@ void formation_step(Formation* f, unsigned int* rng, float dt) {
     Vec3 dir = (d > 1e-6f) ? scalmul3(to_wp, 1.0f / d) : (Vec3){0.0f, 0.0f, 0.0f};
     float speed = fminf(f->speed, FM_ARRIVE_GAIN * d);
 
-    f->centroid.vel = scalmul3(dir, speed);
+    // Slew the velocity *vector* under FM_ACCEL_MAX rather than snapping to it.
+    // This covers direction changes as well as speed changes — a waypoint
+    // capture reverses `dir`, and an unbounded turn is what the tracker cannot
+    // follow. centroid.vel remains exactly the rate applied this tick, so the
+    // slot feedforward stays exact (asserted by the [formation ff] gate).
+    Vec3 v_want = scalmul3(dir, speed);
+    Vec3 dv = sub3(v_want, f->centroid.vel);
+    float dv_max = FM_ACCEL_MAX * dt;
+    float dv_norm = norm3(dv);
+    if (dv_norm > dv_max) dv = scalmul3(dv, dv_max / dv_norm);
+
+    f->centroid.vel = add3(f->centroid.vel, dv);
     f->centroid.pos = add3(f->centroid.pos, scalmul3(f->centroid.vel, dt));
 
-    // Heading follows the course over ground; hold it when nearly vertical.
-    float horiz = sqrtf(dir.x * dir.x + dir.y * dir.y);
+    // Heading follows the course made good — the *actual* velocity, not the
+    // desired direction, so it cannot lead a turn the centroid has not taken
+    // yet. Held when nearly vertical or nearly stopped, where the direction is
+    // ill-conditioned.
+    Vec3 v = f->centroid.vel;
+    float horiz = sqrtf(v.x * v.x + v.y * v.y);
     float rate = 0.0f;
-    if (horiz > 1e-3f) {
-        float err = wrap_pi(atan2f(dir.y, dir.x) - f->centroid.yaw);
+    if (horiz > 1e-2f) {
+        float err = wrap_pi(atan2f(v.y, v.x) - f->centroid.yaw);
         rate = clampf(FM_YAW_KP * err, -FM_YAW_RATE_MAX, FM_YAW_RATE_MAX);
         if (fabsf(rate * dt) > fabsf(err)) rate = err / dt; // no overshoot
     }

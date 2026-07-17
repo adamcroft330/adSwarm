@@ -40,6 +40,7 @@ static DroneEnv* make_env(int n, int control_mode, float k_res) {
     env->separation_floor = 0.0f;
     env->separation_terminates = 0;
     env->formation_modes = 0; // binding.c default: box-only, per the brief
+    env->formation_speed = FM_CRUISE_SPEED;
     env->control_mode = control_mode;
     env->k_res = k_res;
     env->rng = 42;
@@ -713,6 +714,20 @@ static int test_formation_box_reform(void) {
         env->formation_modes = 0;        // pin the mode; this test drives it
         env->hover_target_dist = 100.0f; // never oob during the manoeuvre
         c_reset(env);
+
+        // Fly a straight course, as the MuJoCo reference's scenario does. The
+        // random waypoint tour would otherwise drop a turn into the middle of
+        // a reform and time the two together; turns are a separate concern
+        // (the speed/accuracy sweep), not part of NFR-36.
+        env->formation.centroid.pos = (Vec3){-20.0f, 0.0f, 0.0f};
+        env->formation.centroid.vel = (Vec3){env->formation_speed, 0.0f, 0.0f};
+        env->formation.centroid.yaw = 0.0f;
+        env->formation.centroid.yaw_rate = 0.0f;
+        env->formation.waypoint = (Vec3){25.0f, 0.0f, 0.0f}; // 45 m out: no capture in 5 s
+        for (int i = 0; i < 4; i++)
+            set_target(&env->rng, env->task, env->agents, i, env->num_agents,
+                       env->hover_target_dist, &env->formation);
+
         for (int i = 0; i < 4; i++) { // start settled on the box slots
             env->agents[i].state.pos = env->agents[i].target->pos;
             env->agents[i].state.vel = env->agents[i].target->vel;

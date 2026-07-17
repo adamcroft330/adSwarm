@@ -86,6 +86,126 @@ slot-holding error rate. Identity for static-target tasks.
 
 ---
 
+## 2026-07-17 — Centroid speed is a performance choice, and the planner was the bottleneck
+
+Started from a good question: the classical floor is strong on accuracy, so
+where can a residual actually add value? Answer: **the speed axis, which nobody
+had looked at.** Chasing it found a defect in my own path planner that was
+costing more than any policy could add.
+
+### The setup: speed was never a decision
+
+`FM_CRUISE_SPEED` was a hardcoded **1.0 m/s**. The classical controller does not
+have a poor speed policy — it has **none**; it flies at whatever that constant
+says. Meanwhile the competition scores **course time (6 pts) exactly as heavily
+as formation accuracy (6 pts)**, and our env models only accuracy: the reward
+has no progress or time term at all. So Stage 3b was being set up to compete on
+the one axis where the classical is already at 0.97/1.0, while the axis where it
+has no policy at all went unmeasured.
+
+### The trap this nearly walked into
+
+A first sweep showed accuracy degrading steeply with speed and the separation
+floor breaching at 2.8 m/s — an apparently real speed/accuracy tradeoff. Had we
+built the speed action then, RL would have found ~2.0–2.5 and we would have
+reported *"the residual doubles course speed"*. **That result would have been
+fake**: it would have been beating an arbitrary constant, not the controller.
+
+### The actual bottleneck: an untrackable reference trajectory
+
+The centroid decelerated smoothly into a waypoint (`FM_ARRIVE_GAIN`) but then
+**accelerated instantly** — at capture, distance jumps, so speed stepped from
+0.5 m/s straight back to cruise *in a new direction*. The reference trajectory
+had unbounded acceleration; the tracker could only chase it. The MuJoCo
+reference ramps its centroid, and this is why.
+
+`FM_ACCEL_MAX = 2.0 m/s²` now slews the velocity **vector** (covering direction
+changes, not just speed). `centroid.vel` remains exactly the rate applied, so
+the feedforward invariant still holds (0.0014 m/s). Heading now follows course
+made good rather than the desired direction, so it cannot lead a turn the
+centroid has not taken.
+
+| @2.6 m/s | before | after |
+| --- | ---: | ---: |
+| worst error | 1.60 m | **0.38 m** |
+| flight separation | 0.437 m | **0.977 m** |
+| perf | 0.780 | **0.918** |
+
+**Most of the "speed/accuracy tradeoff" was this bug.** With a trackable
+centroid, worst-case error is flat at ~0.38 m from 1.0 to 2.6 m/s and *nothing
+breaches the floor anywhere in range*.
+
+### What actually limits speed: NFR-36, not accuracy
+
+| speed | perf | flight_sep | worst_err | reform→box | authority |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.0 | 0.981 | 1.165 | 0.350 | 1.66 s | 2.0 |
+| 2.0 | 0.943 | 1.166 | 0.378 | 1.63 s | 1.0 |
+| **2.2** | 0.932 | 1.166 | 0.380 | **1.61 s** | 0.8 |
+| 2.4 | 0.925 | 1.064 | 0.382 | 1.61 s | 0.6 |
+| 2.6 | 0.918 | 0.977 | 0.378 | **2.15 s ✗** | 0.4 |
+| 2.8 | 0.885 | 0.606 | 0.785 | **4.05 s ✗** | 0.2 |
+
+Reform is flat at ~1.6 s to 2.4 m/s, then cliffs. The cause is arithmetic: a
+reform must fit in the correction authority left under `VC_V_MAX` (3.0) after
+cruising. At 2.6 that is 0.4 m/s — not enough to move drones ±1.125 m
+vertically inside 2 s.
+
+**Shipped: `formation_speed = 2.2`**, now a config key rather than a constant.
+2.4 is the fastest in-spec value; 2.2 sits two steps from the cliff instead of
+one and leaves 0.8 m/s of authority, which the Stage 3b residual must also fit
+inside (it is added *before* the `VC_V_MAX` clip). It still more than doubles
+the old default's throughput.
+
+### Consequence: the residual's speed story needs Stage 4
+
+On an **open, box-only course there is no reform to prepare for**, so NFR-36
+does not bind and the limit is accuracy (~2.6). With deviations possible, a
+*fixed* speed must be conservative enough to reform **at all times** — 2.2/2.4.
+A *variable* speed only has to be reform-ready when a reform is imminent: cruise
+2.6+ on clear stretches, bank authority approaching an obstacle, deviate,
+reform, accelerate out. **That gap is the residual's real value, and it is
+exactly what no constant can capture** — but demonstrating it needs an obstacle
+to trigger the deviation, i.e. Stage 4. The `time-to-next-mode-change`
+observation already exists for precisely this signal and is inert until then.
+
+So Stage 3b, on an open course, still competes mainly on tracking accuracy
+against perf 0.932. The speed mechanism is worth building now (it is free —
+`dv[3]` is unused — and it is the Stage 4 seam), but **a Stage 3b speed result
+should not be expected or claimed**.
+
+### Also found
+
+A turn landing mid-reform pushes reform to **4.0 s**, violating NFR-36. The
+`[box reform]` gate now flies a straight course, as the reference scenario
+does, so it measures the mode change rather than timing a turn with it — but
+**the coincidence is a real failure mode on a real course**, not just a test
+artifact, and obstacle-triggered deviations will not politely avoid corners.
+Worth carrying into Stage 4.
+
+### Stage 3a floor re-measured at 2.2 m/s
+
+Superseding both earlier records. `bash stirling/tests/run_stage3a_bench.sh`:
+
+| Metric | SWARM (n=4) @ 2.2 m/s | (was, @1.0 m/s) |
+| --- | ---: | ---: |
+| score | **935.88** | 970.19 |
+| perf | **0.9324** | 0.9716 |
+| episode_return | **37.71** | 55.55 |
+| ema_dist | **0.0578** | 0.0217 |
+| mean tracking error | **0.0662 m** | 0.0359 m |
+| worst tracking error | **0.4510 m** | 0.6514 m |
+| min separation | **0.5649 m** | 0.6045 m |
+| oob / collisions / sep_breach | **0 / 0 / 0** | 0 / 0 / 0 |
+
+The floor is *lower* on every accuracy metric because the task is now twice as
+fast — that is the point, and it is why the floor had to be re-measured rather
+than compared across speeds. Note worst-case error actually **improved**
+(0.65 → 0.45 m) despite the doubled speed: the bounded-acceleration centroid
+more than paid for the extra pace.
+
+---
+
 ## 2026-07-17 — Competition brief read; mode scheduler is a fixture, not the task; Stage 3a floor recorded
 
 The official **2026 Tomorrow Trials Competition Brief** (`stirling/docs/`) is now
