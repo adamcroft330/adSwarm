@@ -62,12 +62,12 @@
 #ifndef VC_I_LIMIT
 #define VC_I_LIMIT 0.5f // per-axis integrator clamp [m*s]
 #endif
+// Velocity-setpoint saturation [m/s]. Defined canonically in dronelib.h, which
+// this header includes, so the two cannot drift — there is one definition, not
+// a copy plus an assertion that the copy still matches.
 #ifndef VC_V_MAX
-#define VC_V_MAX 3.0f // velocity-setpoint saturation [m/s]
+#define VC_V_MAX OBS_V_MAX
 #endif
-// dronelib.h normalises the u_classic observation by this gain, but cannot
-// reference it (this header includes that one, not the reverse). Keep in sync.
-_Static_assert(VC_V_MAX == OBS_V_MAX, "OBS_V_MAX (dronelib.h) must track VC_V_MAX");
 // Inner loop:
 #ifndef VC_KV
 #define VC_KV 5.0f              // velocity P gain [1/s] (~2.5x above position)

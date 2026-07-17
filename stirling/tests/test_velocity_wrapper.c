@@ -446,10 +446,18 @@ static int test_formation_mode_scheduler(void) {
     for (int t = 0; t < 20000; t++) formation_step(&pinned, &rng2, ACTION_DT);
     int pin_ok = (pinned.mode == FORM_BOX);
 
-    int ok = (transitions > 20) && (illegal == 0) && all_modes && pin_ok;
+    // A blend must never be interrupted: formation_set_mode discards a partial
+    // blend, stepping the target. Dwell > blend makes that unreachable. Checked
+    // here rather than with _Static_assert — these are floats, and C11 wants an
+    // integer constant expression (Apple clang allows it, the Linux build does
+    // not; see tasks.h).
+    int dwell_ok = FM_MODE_DWELL_MIN > FM_BLEND_TIME;
+
+    int ok = (transitions > 20) && (illegal == 0) && all_modes && pin_ok && dwell_ok;
     printf("[mode sched]    %d transitions in 200 s, dev->dev violations=%d, all deviations "
-           "visited=%d, box-only pins=%d  -> %s\n",
-           transitions, illegal, all_modes, pin_ok, ok ? "PASS" : "FAIL");
+           "visited=%d, box-only pins=%d, dwell(%.1f) > blend(%.1f)=%d  -> %s\n",
+           transitions, illegal, all_modes, pin_ok, (double)FM_MODE_DWELL_MIN,
+           (double)FM_BLEND_TIME, dwell_ok, ok ? "PASS" : "FAIL");
     return ok;
 }
 

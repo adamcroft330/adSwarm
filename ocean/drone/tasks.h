@@ -155,14 +155,16 @@ FormationMode get_formation_mode(char* mode_name) {
 #ifndef FM_MODE_DWELL_MAX
 #define FM_MODE_DWELL_MAX 6.0f
 #endif
-// The dwell must exceed the blend, or the scheduler could retarget a
-// transition that is still running. formation_set_mode discards a partial
-// blend (prev_mode := mode, as the Python reference does), so interrupting one
-// makes the target position jump from the blended offset to the destination's
-// — a step the tracker would chase. Keeping dwell > blend makes that
-// unreachable rather than merely unlikely.
-_Static_assert(FM_MODE_DWELL_MIN > FM_BLEND_TIME,
-               "mode dwell must exceed blend time, or a blend can be interrupted mid-flight");
+// INVARIANT: FM_MODE_DWELL_MIN > FM_BLEND_TIME. The dwell must exceed the
+// blend, or the scheduler could retarget a transition that is still running.
+// formation_set_mode discards a partial blend (prev_mode := mode, as the Python
+// reference does), so interrupting one makes the target position jump from the
+// blended offset to the destination's — a step the tracker would chase.
+//
+// Asserted at runtime by the [mode sched] gate rather than with _Static_assert:
+// these are floats, and C11 requires an *integer* constant expression, so a
+// float comparison there is invalid. Apple clang accepts it; the Linux
+// toolchain that builds for training correctly does not.
 
 // Centroid path planner (Stage 3: a rule-based waypoint cursor).
 // Default centroid cruise speed [m/s]. Overridable per-run via

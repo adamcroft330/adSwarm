@@ -646,9 +646,14 @@ float check_hover(Drone* agent, float hover_dist, float hover_omega, float hover
 // 0.1 is tuned for the 30 m grid and would squash them all to near zero.
 #define OBS_NEIGHBOR_SCALE 0.5f
 #define OBS_TTM_SCALE 0.5f // time-to-mode-change: tanh(0.5*t), ~0.76 at 2 s
-// u_classic is normalised by the setpoint saturation. velocity_controller.h
-// owns that gain but includes this header, so it cannot be referenced here;
-// it static-asserts VC_V_MAX against this instead.
+// Canonical velocity-setpoint saturation [m/s]. Lives here, in the header both
+// sides include, so there is exactly one definition: velocity_controller.h
+// defaults VC_V_MAX to this rather than restating it.
+//
+// It doubles as the u_classic observation's normaliser. A -D override of
+// VC_V_MAX (the seam the test sweeps use) deliberately does *not* move this:
+// the observation wants a stable scale across a sweep, and the value is clamped
+// anyway, so a swept cascade cannot silently rescale the policy's inputs.
 #define OBS_V_MAX 3.0f
 
 // formation_mode < 0 means "not the FORMATION task": the one-hot and the
