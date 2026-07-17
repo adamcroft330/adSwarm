@@ -67,8 +67,33 @@ than training on aliased slots. Verified: 1 and 4 reset cleanly, 64 exits 1
 with the config fix in the message.
 
 **Consequence for (f)/(g):** the FORMATION runs need `task = 2` and
-`num_drones = 4`; `config/drone.ini` still carries the HOVER values
-(`task = 1`, `num_drones = 64`). Not changed here — that is (f)'s call.
+`num_drones = 4`. The default stays HOVER; these are overrides (below).
+
+### The velocity stack was unreachable from training
+
+Found while working out what a "FORMATION config" is. `pufferl.load_config`
+builds **one CLI flag per key in `config/drone.ini`**, then passes the `[env]`
+section to `my_init` as kwargs. `control_mode` and `k_res` were never in the
+ini — `binding.c` reads them with `dict_get_unsafe` and falls back to defaults,
+which is what kept task (a) inert for the Stage 1 regression. The side effect:
+no key ⇒ no generated flag ⇒ **no way to select the velocity stack from a
+training run at all**. Every Stage 3 control-path run was blocked on this, not
+just (f).
+
+Both are now in `[env]` with inert values (`control_mode = 0`, `k_res = 0.0`),
+so the default run is unchanged — HOVER on the native motor path — but both are
+overridable. No second config file: FORMATION is an invocation.
+
+```
+--env.task 2 --env.num-drones 4 --env.control-mode 1
+```
+
+`k_res` is written `0.0`, not `0`, deliberately: the flag's type comes from
+`ast.literal_eval` of the ini value, so `0` would type it `int` and silently
+truncate `--env.k-res 0.5` to `0` — which is exactly the sweep (g) depends on.
+Verified end-to-end: defaults resolve to `task=1, control_mode=0, k_res=0.0`,
+and the override above resolves to `task=2, num_drones=4, control_mode=1` with
+`k_res=0.5` surviving as a float.
 
 ### Task ids renumbered: FORMATION is 2
 
