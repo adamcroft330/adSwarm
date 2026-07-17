@@ -495,6 +495,41 @@ static int test_formation_task_in_env(void) {
     return ok;
 }
 
+// Test 10a: episode lifecycle. Runs well past HORIZON so resets actually fire
+// -- the case test 10 misses by placing drones on-slot and stopping short.
+//
+// HOVER spawns a drone anywhere and then puts its target nearby; FORMATION
+// cannot, because the slot is wherever the centroid is. Without a
+// formation-aware spawn the drone starts tens of metres off-slot and
+// terminates as oob immediately (measured: 1285 oob vs 12 timeouts over 40 s),
+// so the task is reset churn and every metric taken from it is meaningless.
+static int test_formation_episode_lifecycle(void) {
+    DroneEnv* env = make_env(4, CONTROL_MODE_VELOCITY, 0.0f);
+    env->task = FORMATION;
+    c_reset(env);
+
+    // Every drone must start within the spawn ball of its own slot.
+    float worst_spawn = 0.0f;
+    for (int i = 0; i < 4; i++) {
+        float d = norm3(sub3(env->agents[i].target->pos, env->agents[i].state.pos));
+        if (d > worst_spawn) worst_spawn = d;
+    }
+
+    // 4000 ticks = ~4 HORIZONs, so timeouts fire and re-spawn several times.
+    for (int t = 0; t < 4000; t++) c_step(env);
+
+    int spawn_ok = worst_spawn <= FM_SPAWN_DIST + 1e-3f;
+    int no_oob = (env->log.oob == 0.0f);
+    int timed_out = (env->log.timeout > 0.0f);
+    int ok = spawn_ok && no_oob && timed_out;
+    printf("[formation life] worst spawn offset=%.2f m (gate <=%.1f)  oob=%.0f (gate 0)  "
+           "timeouts=%.0f  -> %s\n",
+           worst_spawn, (double)FM_SPAWN_DIST, env->log.oob, env->log.timeout,
+           ok ? "PASS" : "FAIL");
+    free(env);
+    return ok;
+}
+
 // --- Task (d) tests: the extended observation vector ------------------------
 
 // Test 11: obs layout and invariants. Checks the width, that RPMs are still
@@ -632,6 +667,7 @@ int main(int argc, char** argv) {
     pass &= test_formation_blend();
     pass &= test_formation_feedforward_consistency();
     pass &= test_formation_task_in_env();
+    pass &= test_formation_episode_lifecycle();
 
     printf("--- task (d): extended observation vector ---\n");
     pass &= test_obs_layout();

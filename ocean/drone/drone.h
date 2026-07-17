@@ -131,6 +131,12 @@ void reset_agent(DroneEnv* env, Drone* agent, int idx) {
     agent->state.pos =
         (Vec3){rndf(-MARGIN_X, MARGIN_X, &env->rng), rndf(-MARGIN_Y, MARGIN_Y, &env->rng), rndf(-MARGIN_Z, MARGIN_Z, &env->rng)};
 
+    if (env->task == FORMATION) {
+        // Overrides the random grid spawn above: a FORMATION drone must start
+        // at its slot, which is wherever the centroid currently is.
+        formation_spawn_state(&env->formation, idx, &env->rng, &agent->state.pos, &agent->state.vel);
+    }
+
     if (env->task == RACE) {
         while (norm3(sub3(agent->state.pos, env->ring_buffer[0].pos)) < 2.0f * RING_RADIUS) {
             agent->state.pos = (Vec3){rndf(-MARGIN_X, MARGIN_X, &env->rng), rndf(-MARGIN_Y, MARGIN_Y, &env->rng),

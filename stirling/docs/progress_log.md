@@ -7,6 +7,68 @@ this records what actually landed.
 
 ---
 
+## 2026-07-17 — FORMATION spawn fix; (f) is blocked on (e), with the cost measured
+
+Found while setting up (f), the Stage 3a classical benchmark. Two problems, one
+fixed, one flagged for a decision.
+
+### Fixed: FORMATION spawned drones nowhere near their slots
+
+`reset_agent` places a drone at a random grid point. That is right for HOVER —
+`set_target_hover` then places the *target* near the *drone*. FORMATION inverts
+the dependency: the slot is wherever the centroid is, so the drone must move to
+it, not the reverse. The random spawn landed **17–58 m** off-slot against a 6 m
+oob margin (`hover_target_dist + 1`), so episodes terminated on the first tick.
+
+Measured over 40 s with 4 drones, before the fix:
+
+| | before | after |
+| --- | ---: | ---: |
+| oob terminations | 1285 | **0** |
+| timeouts | 12 | 12 |
+| mean tracking error | 1.574 m | **0.064 m** |
+
+The task was ~99% reset churn, and every metric from it was meaningless. Fixed
+with `formation_spawn_state()`: the drone starts uniformly within
+`FM_SPAWN_DIST` (1.0 m) of its slot and matches the slot velocity, so an
+episode begins in formation rather than accelerating into it.
+
+**Why the tests missed it:** the in-env test placed drones on-slot by hand and
+ran 800 ticks — under `HORIZON` (1024), so no reset ever fired. A new gate
+(`[formation life]`) runs ~4 horizons and asserts spawn offset plus **oob = 0**.
+
+### Flagged: the reward/metric is HOVER-shaped, and (e) is not done
+
+`check_hover` and `hover_potential` both use **absolute** velocity
+(`norm3(agent->state.vel)`), compared against `hover_vel = 0.1`. A FORMATION
+drone must cruise with its centroid at ~1 m/s, so the metric penalises it for
+performing the task. Measured on a clean run (pure classical, `k_res=0`):
+
+| | value |
+| --- | ---: |
+| mean tracking error | 0.064 m |
+| mean \|v\| (absolute) | 1.031 m/s — the required cruise |
+| mean \|v − v_target\| | 0.088 m/s — the real tracking error rate |
+| `check_hover`, absolute velocity (today) | 0.778 |
+| `check_hover`, velocity relative to target | 0.918 |
+
+**The drone loses 15.2% of its score purely for cruising.** For (f) alone this
+is survivable — a floor and a residual measured on the same metric still
+compare. But `reward` includes `alpha_hover * curr`, so (g) would train a
+residual that is rewarded for *slowing down*, i.e. for leaving the formation.
+That is a training pathology, not a scoring quirk, and the plan already
+sequences (e) before (f).
+
+The natural fix is to measure velocity (and the potential's velocity term)
+relative to `target->vel`. It has a clean property: **HOVER, ORBIT, CUBE and
+FLAG all set `target->vel = 0`, so it is exactly identity for them** — no
+Stage 1 behaviour change. Only IDLE/FOLLOW/CONGO shift, and those carry the
+per-tick `target->vel` units artifact (see the task-c entry) and are untrained
+demo tasks. Not taken unilaterally: (e) also covers re-weighting the four
+alphas, reform shaping, a jerk penalty, and a richer termination set.
+
+---
+
 ## 2026-07-16 — Observation extension 23 → 41 (task d); `num_drones=4` is the FORMATION config
 
 Stage 3 tasks (a)–(d) are now done. Next is (f), the Stage 3a classical

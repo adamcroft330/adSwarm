@@ -135,6 +135,9 @@ FormationMode get_formation_mode(char* mode_name) {
 #ifndef FM_YAW_RATE_MAX
 #define FM_YAW_RATE_MAX 0.5f // centroid turn-rate limit [rad/s]
 #endif
+#ifndef FM_SPAWN_DIST
+#define FM_SPAWN_DIST 1.0f // episode-start offset from the assigned slot [m]
+#endif
 
 // Waypoint inset from the world extent. Covers the largest slot offset (line,
 // 1.5 m) so no slot target is ever placed outside the flyable volume.
@@ -260,6 +263,30 @@ void formation_slot_target(const Formation* f, int slot, Vec3* p_out, Vec3* v_ou
     // omega x r_off, with omega = (0, 0, yaw_rate).
     Vec3 yaw_term = {-f->centroid.yaw_rate * r_off.y, f->centroid.yaw_rate * r_off.x, 0.0f};
     *v_out = add3(add3(f->centroid.vel, rz_rotate(f->centroid.yaw, d_off)), yaw_term);
+}
+
+// Episode-start state for one slot: near it, moving with it. HOVER spawns the
+// drone anywhere and then places its target nearby; FORMATION cannot do that —
+// the slot is wherever the centroid is, so a random grid spawn lands tens of
+// metres away and terminates as oob on the first tick. Offset is uniform in a
+// ball (same construction as set_target_hover), and the slot velocity is
+// matched so the episode starts in formation rather than accelerating into it.
+void formation_spawn_state(const Formation* f, int idx, unsigned int* rng, Vec3* pos_out,
+                           Vec3* vel_out) {
+    Vec3 slot_p, slot_v;
+    formation_slot_target(f, idx % FM_N_SLOTS, &slot_p, &slot_v);
+
+    float u = rndf(0.0f, 1.0f, rng);
+    float v = rndf(0.0f, 1.0f, rng);
+    float z = 2.0f * v - 1.0f;
+    float a = 2.0f * (float)M_PI * u;
+    float r_xy = sqrtf(fmaxf(0.0f, 1.0f - z * z));
+    float rad = FM_SPAWN_DIST * cbrtf(rndf(0.0f, 1.0f, rng));
+    Vec3 p = add3(slot_p, (Vec3){rad * r_xy * cosf(a), rad * r_xy * sinf(a), rad * z});
+
+    *pos_out = (Vec3){clampf(p.x, -MARGIN_X, MARGIN_X), clampf(p.y, -MARGIN_Y, MARGIN_Y),
+                      clampf(p.z, -MARGIN_Z, MARGIN_Z)};
+    *vel_out = slot_v;
 }
 
 static void formation_pick_waypoint(Formation* f, unsigned int* rng) {
