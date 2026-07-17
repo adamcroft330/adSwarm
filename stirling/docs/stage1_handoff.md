@@ -1,5 +1,23 @@
 # Stage 1 RunPod Handoff - Stirling Drone Project
 
+> **HISTORICAL (superseded 2026-07-16).** Kept as the record of how the Stage 1
+> baseline was originally produced. Two things in here are no longer live:
+>
+> - **The RunPod workflow is superseded by Modal.** Train with
+>   `modal run stirling/modal/train_drone.py` — one command, no SSH or
+>   provisioning. See `stirling/modal/README.md`.
+> - **The baseline metrics below (score 836.9, ema_dist 0.020) are retired.**
+>   They no longer describe the env, on two counts: they were measured in
+>   **bf16** (training now defaults to fp32, because bf16 policies do not
+>   transfer to the fp32 Mac eval path), and against **`BASE_K_MOT = 0.15 s`**
+>   motors (now 0.05 s, since 0.15 s was an unrealistic constant that made the
+>   Stage 3 formation requirement unreachable). **Do not regress against these
+>   numbers.** For reference, the same HOVER task on current dynamics scores
+>   ~820 with ema_dist ~0.009.
+>
+> Stage 3 is judged on the classical floor (3a) and the residual (3b), measured
+> on the FORMATION task — not on this baseline. See `progress_log.md`.
+
 Written 2026-05-16. Updated after the successful Stage 1 HOVER baseline run.
 
 ## Status

@@ -384,6 +384,43 @@ beyond thrust saturation. Robustness *claims* beyond "works for generic
 inertia) and domain randomisation — that's Stage-3b / Stage-5 work, not
 established here.
 
+### Confirmed in practice: the C port (2026-07-16)
+
+The caveat above — *"as long as the inner loop still tracks velocity
+setpoints with a fast time constant"* — turned out to be the binding one,
+and it is worth recording how it presented, because the failure did **not**
+look like a platform problem.
+
+Ported to the PufferLib env (Crazyflie constants, `BASE_K_MOT = 0.15 s`
+motor lag), the identical control law reformed in **6.41 s** against
+MuJoCo's 1.29 s. The instinct is to suspect the port. It was not the port:
+
+- The motor lag caps the cascade from the bottom. At 0.15 s the reference
+  gains (`kp=2`, `kv=5`, `kr=200`) are **unstable** — they diverge — so the
+  cascade must detune to `kp=0.6`, `kv=2`. At `kv=2` the velocity loop's
+  time constant is 0.5 s, so a 2.5 m/s disturbance coasts `v·τ ≈ 1.25 m`
+  before stopping. No outer-loop tuning recovers that.
+- **Faster motors alone did not help either** (3.75 s at `k_mot = 0.02 s`
+  with the detuned gains). Motors and gains are *coupled*: the platform sets
+  the ceiling on the gains, so moving one without the other changes nothing.
+  A one-variable-at-a-time sweep exonerated the wrong variable.
+- Given the reference gains **and** a realistic motor lag, the C port
+  reproduced this document's §8 numbers to ~3% (1.25 s / 0.487 m / 0.76 m).
+  That is what confirmed the port was faithful all along.
+
+Resolution: `BASE_K_MOT` lowered to a realistic 0.05 s (a real Crazyflie 2.1
+is ~0.02–0.05 s; this project targets faster 5"-class propulsion), and the
+env's cascade raised to the reference gains in §11 — the C and Python
+configurations have now converged.
+
+**The transferable lesson for Stage 2:** the platform-agnosticism claimed
+above is real but *conditional*, and the condition is not soft. An inner
+loop that cannot serve the setpoints does not merely degrade the formation
+law — it forces a detune that silently changes what the controller is
+capable of. When the real platform's constants land, re-run
+`stirling/tests/run_velocity_tests.sh`: its motor-lag witness table shows
+the cost of the actuator directly.
+
 ---
 
 ## 10. Timing

@@ -156,7 +156,8 @@ void c_step(DroneEnv* env) {
             // Policy actions become the 3-float residual dv (4th unused);
             // k_res=0 gives the pure classical dv=0 benchmark.
             float motor_actions[4];
-            velocity_control_step(agent, &env->actions[4 * i], env->k_res, motor_actions);
+            velocity_control_step(i, env->agents, env->num_agents, &env->actions[4 * i],
+                                  env->k_res, ACTION_DT, motor_actions, NULL);
             move_drone(agent, motor_actions);
         } else {
             move_drone(agent, &env->actions[4 * i]);

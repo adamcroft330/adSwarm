@@ -5,15 +5,30 @@ Written 2026-06-30. Covers Stage 3 of the RL pipeline (`rl_pipeline_doc_v0_3.md`
 controller, the FORMATION task, and the residual RL action interface on top
 of the Stage 1 baseline.
 
-> **Progress update (2026-07-14):** parts of this plan have since landed —
-> the classical controller is reconstructed and MuJoCo-validated
-> (`stirling/controller/`, task a/b groundwork), and the velocity-setpoint
-> wrapper (task a) is implemented in `ocean/drone/velocity_controller.h` on
-> branch `stage3a-velocity-wrapper`. The "classical controller source is
-> missing" blocker below is **resolved**. Training now runs via the Modal
-> framework (`stirling/modal/`), not the RunPod flow this doc assumes. See
-> `progress_log.md` for the current state; the task breakdown below is kept
-> as the original plan of record.
+> **Progress update (2026-07-16).** The task breakdown below is kept as the
+> original plan of record; this is what has actually landed. See
+> `progress_log.md` for detail.
+>
+> | Task | Status |
+> | --- | --- |
+> | Blocker: classical controller source missing | **Resolved** — reconstructed in `stirling/controller/`, MuJoCo-validated |
+> | (a) velocity-setpoint wrapper | **Done, merged** (PR #4). Proven inert at `control_mode=0` by byte-identical checkpoints |
+> | (b) classical controller C port | **Done** — `ocean/drone/velocity_controller.h`. NFR-36 passes in-env: reform 1.25 s, min sep 0.488 m (MuJoCo ref 1.29 / 0.49) |
+> | (c) FORMATION task | Not started — next |
+> | (d) observation extension | Not started |
+> | (f) Stage 3a benchmark / (g) 3b residual | Blocked on (c)/(d) |
+>
+> Two deviations from this doc worth knowing:
+>
+> - **Training is via Modal** (`stirling/modal/`), not the RunPod flow this doc
+>   assumes. One command; see `stirling/modal/README.md`.
+> - **`BASE_K_MOT` was lowered 0.15 → 0.05 s** — a Stage 2 platform
+>   recalibration taken early. At 0.15 s the actuator lag capped the control
+>   cascade and made the 2 s reform rule unreachable regardless of the control
+>   law. This doc's assumption that Stage 3 "runs independently of the hardware
+>   decision using the existing Crazyflie constants" held for task (a) but
+>   **broke at task (b)** — one platform constant had to move for the formation
+>   requirement to be achievable at all.
 
 ## Status going in
 

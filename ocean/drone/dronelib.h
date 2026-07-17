@@ -25,7 +25,17 @@
 #define BASE_K_DRAG 0.005964552f // yaw moment constant
 #define BASE_GRAVITY 9.81f       // m/s^2
 #define BASE_MAX_RPM 21702.0f    // RPM
-#define BASE_K_MOT 0.15f         // s (RPM time constant)
+// Motor+prop RPM time constant. Upstream shipped 0.15 s, which is sluggish
+// even for a Crazyflie 2.1 (real ~0.02-0.05 s) and is not representative of
+// the 5"/250-class propulsion this project targets. At 0.15 s the actuator
+// lag caps the whole control cascade — the gains needed to meet the 2 s
+// formation reform rule (NFR-36) are outright unstable — so the classical
+// controller could not meet spec for reasons that were an artifact of this
+// constant rather than the control law. See stirling/docs/progress_log.md.
+// Lowering it to a realistic 0.05 s is a Stage 2 (platform recalibration)
+// change taken early; it alters env dynamics, so Stage 1 baseline metrics
+// recorded against 0.15 s do not carry over and were re-established.
+#define BASE_K_MOT 0.05f         // s (RPM time constant)
 
 #define BASE_K_ANG_DAMP 0.0f // angular damping coefficient
 #define BASE_B_DRAG 0.0f     // linear drag coefficient
@@ -133,6 +143,10 @@ typedef struct {
 
     // current target
     Target* target;
+
+    // classical controller integral state (velocity_controller.h); world
+    // frame, [m*s]. Caller-owned so the control law stays a pure function.
+    Vec3 integ;
 
     // target buffer
     Target* buffer;
@@ -301,6 +315,7 @@ static inline void init_drone(Drone* drone, unsigned int* rng, float dr) {
     drone->state.vel = (Vec3){0.0f, 0.0f, 0.0f};
     drone->state.omega = (Vec3){0.0f, 0.0f, 0.0f};
     drone->state.quat = (Quat){1.0f, 0.0f, 0.0f, 0.0f};
+    drone->integ = (Vec3){0.0f, 0.0f, 0.0f};
 }
 
 static inline void compute_derivatives(State* state, Params* params, float* actions,

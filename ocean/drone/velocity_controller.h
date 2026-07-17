@@ -30,25 +30,69 @@
 #define CONTROL_MODE_MOTOR 0 // native 4-float motor actions (Stage 1 path)
 #define CONTROL_MODE_VELOCITY 1 // velocity-setpoint stack (Stage 3 path)
 
-// --- Cascade gains, tuned for the sim's Crazyflie constants and its slow
-//     k_mot=0.15 s motor lag. Loop bandwidths are deliberately separated
-//     ~3x per layer (position << velocity << attitude << motor) so the
-//     stack is well-damped; the motor lag caps attitude at ~3 rad/s, which
-//     sets the whole ladder. Retune on Stage 2 platform recalibration. -----
-// Outer classical law (velocity-setpoint space):
-// NOTE: KP is capped low by the sim's sluggish k_mot=0.15 s motors — KP=1.0
-// already overshoots. 0.6 is the stable ceiling here; reform *speed* is the
-// residual RL's job (Stage 3b), task (a) only needs stable pure-classical
-// hover. Stage 2's real platform (faster motors) will lift this.
-#define VC_KP 0.6f    // position P gain [1/s] (~0.6 rad/s, tau ~1.7 s)
-#define VC_V_MAX 2.0f // velocity-setpoint saturation [m/s]
+// --- Cascade gains. These match stirling/controller/default_params.py, the
+//     configuration validated in MuJoCo (reform 1.29 s, min sep 0.49 m).
+//
+//     Loop bandwidths are separated per layer so the stack stays damped:
+//         position (KP=2)  <  velocity (KV=5)  <  attitude (sqrt(KR)=14.1)
+//                                              <  motor (1/k_mot=20 rad/s)
+//     Each rung is capped by the one below it, so the platform's motor time
+//     constant propagates all the way up to "can it reform in 2 s". The
+//     env previously shipped BASE_K_MOT=0.15 s, which forced a detune to
+//     KP=0.6/KV=2 and made the 2 s rule unreachable; with a realistic 0.05 s
+//     the reference cascade is supportable. See progress_log.md.
+//
+//     KR and KW must move together: sqrt(KR) sets the attitude natural
+//     frequency and KW sets its damping (zeta = KW / (2*sqrt(KR)) = 0.88).
+//     Raising KR alone just makes it ring.
+//
+// Each gain is -D-overridable so stirling/tests/ can sweep the cascade
+// without editing this header — the seam a platform re-tune uses.
+// Outer classical law (tech doc §8.2), velocity-setpoint space:
+//     u = KFF*v_target + KP*e + KI*integ
+#ifndef VC_KFF
+#define VC_KFF 1.0f   // target-velocity feedforward (prevents lag on a moving target)
+#endif
+#ifndef VC_KP
+#define VC_KP 2.0f    // position P gain [1/s] (tau ~0.5 s; spec §8.2 nominal)
+#endif
+#ifndef VC_KI
+#define VC_KI 0.3f    // light integral [1/s^2]; kept well under KP
+#endif
+#ifndef VC_I_LIMIT
+#define VC_I_LIMIT 0.5f // per-axis integrator clamp [m*s]
+#endif
+#ifndef VC_V_MAX
+#define VC_V_MAX 3.0f // velocity-setpoint saturation [m/s]
+#endif
 // Inner loop:
-#define VC_KV 2.0f              // velocity P gain [1/s] (~3x above position)
+#ifndef VC_KV
+#define VC_KV 5.0f              // velocity P gain [1/s] (~2.5x above position)
+#endif
+#ifndef VC_TILT_MAX
 #define VC_TILT_MAX 0.6109f     // 35 deg max commanded tilt
-#define VC_KR 12.0f             // attitude P [1/s^2] (wn ~3.5 rad/s)
-#define VC_KW 5.0f              // attitude D [1/s] (damping ~0.72)
+#endif
+#ifndef VC_KR
+#define VC_KR 200.0f            // attitude P [1/s^2] (wn = sqrt(KR) ~14.1 rad/s)
+#endif
+#ifndef VC_KW
+#define VC_KW 25.0f             // attitude D [1/s] (zeta = KW/(2*sqrt(KR)) ~0.88)
+#endif
 #define VC_THRUST_FLOOR 0.3f    // min collective, fraction of hover thrust
 #define VC_THRUST_CEIL 0.95f    // max collective, fraction of max total
+
+// --- APF safety filter (tech doc §8.3) --------------------------------------
+// Repulsion is zero at VC_D_ACT, rising to VC_V_REP_MAX at VC_D_FLOOR and
+// growing further below it. VC_D_ACT must stay under the tightest intended
+// steady-state formation spacing or the filter fights a held formation.
+// These are the spec's numbers (FR-15 separation floor), sized for the real
+// 250-class platform — they are generous relative to the sim's Crazyflie
+// constants (arm 0.04 m), and are a Stage 2 recalibration target.
+#define VC_D_FLOOR 0.40f     // hard separation floor [m]
+#define VC_D_ACT 0.70f       // inter-drone repulsion activation distance [m]
+#define VC_V_REP_MAX 2.0f    // repulsion speed at the floor [m/s]
+#define VC_K_DAMP 0.8f       // closing-rate damping gain
+#define VC_BOUND_MARGIN 0.5f // course-boundary repulsion band [m]
 
 static inline Vec3 cross3(Vec3 a, Vec3 b) {
     return (Vec3){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
@@ -60,13 +104,86 @@ static inline Vec3 clip_norm3(Vec3 v, float limit) {
     return v;
 }
 
-// Layer 1: classical velocity setpoint toward the current task target.
-// For HOVER (static target) this is the tracking law of tech doc §8.2 with
-// v_target = 0 and no integral term (no steady-state disturbance in-sim:
-// gravity is fed forward exactly from the drone's own params).
-static inline Vec3 classical_velocity_setpoint(const Drone* agent) {
+// Layer 3a — nominal tracking law (tech doc §8.2, port of
+// stirling/controller/formation_tracking.py):
+//
+//     u = KFF*v_target + KP*(p_target - p) + KI*integ
+//
+// P + feedforward + light-I with conditional anti-windup. Mutates the
+// caller-owned integrator on `agent`. For HOVER the target is static, so the
+// feedforward term is zero and this reduces to P + light-I.
+static inline Vec3 classical_velocity_setpoint(Drone* agent, float dt) {
     Vec3 err = sub3(agent->target->pos, agent->state.pos);
-    return clip_norm3(scalmul3(err, VC_KP), VC_V_MAX);
+
+    Vec3 u_raw = add3(add3(scalmul3(agent->target->vel, VC_KFF), scalmul3(err, VC_KP)),
+                      scalmul3(agent->integ, VC_KI));
+    Vec3 u = clip_norm3(u_raw, VC_V_MAX);
+
+    // Conditional anti-windup: only integrate while the unsaturated command is
+    // inside the limit, and clamp the stored integral per axis regardless.
+    if (norm3(u_raw) < VC_V_MAX) {
+        agent->integ = add3(agent->integ, scalmul3(err, dt));
+        clamp3(&agent->integ, -VC_I_LIMIT, VC_I_LIMIT);
+    }
+    return u;
+}
+
+// Repulsion magnitude: 0 at d_act, VC_V_REP_MAX at the floor, and still
+// growing below it so violations are pushed out hard.
+static inline float apf_ramp(float d) {
+    return VC_V_REP_MAX * (VC_D_ACT - d) / (VC_D_ACT - VC_D_FLOOR);
+}
+
+// Layer 3c — APF safety filter (tech doc §8.3, port of
+// stirling/controller/safety_filter.py). Inter-drone repulsion with
+// closing-rate damping, plus course-boundary push-back. No solver dependency.
+//
+// Obstacle repulsion is intentionally absent: the env has no obstacle
+// primitives yet (Stage 4). The Python reference keeps a sphere-list term;
+// it slots in here unchanged once those land.
+//
+// Wraps u_classic + k_res*dv, so the separation guarantee holds even if the
+// RL residual misbehaves.
+static inline Vec3 safety_filter(Vec3 u, int idx, Drone* agents, int num_agents) {
+    Vec3 p_i = agents[idx].state.pos;
+    Vec3 v_i = agents[idx].state.vel;
+    Vec3 out = u;
+
+    // Inter-drone repulsion.
+    for (int j = 0; j < num_agents; j++) {
+        if (j == idx) continue;
+        Vec3 d_vec = sub3(p_i, agents[j].state.pos);
+        float d = norm3(d_vec);
+        if (d < 1e-6f || d >= VC_D_ACT) continue;
+
+        Vec3 n = scalmul3(d_vec, 1.0f / d);
+        float mag = apf_ramp(d);
+
+        // Closing-rate damping: brake fast approaches before distance alone
+        // would. Only the approaching component counts.
+        float closing = -dot3(sub3(v_i, agents[j].state.vel), n);
+        if (closing > 0.0f) mag += VC_K_DAMP * closing;
+
+        out = add3(out, scalmul3(n, mag));
+    }
+
+    // Course-boundary repulsion: per-axis push-back inside the margin band of
+    // the world extent (GRID_X/Y/Z from dronelib.h).
+    const float lo[3] = {-GRID_X, -GRID_Y, -GRID_Z};
+    const float hi[3] = {GRID_X, GRID_Y, GRID_Z};
+    float p[3] = {p_i.x, p_i.y, p_i.z};
+    float push[3] = {0.0f, 0.0f, 0.0f};
+    for (int ax = 0; ax < 3; ax++) {
+        float gap_lo = p[ax] - lo[ax];
+        if (gap_lo < VC_BOUND_MARGIN)
+            push[ax] += VC_V_REP_MAX * (VC_BOUND_MARGIN - gap_lo) / VC_BOUND_MARGIN;
+        float gap_hi = hi[ax] - p[ax];
+        if (gap_hi < VC_BOUND_MARGIN)
+            push[ax] -= VC_V_REP_MAX * (VC_BOUND_MARGIN - gap_hi) / VC_BOUND_MARGIN;
+    }
+    out = add3(out, (Vec3){push[0], push[1], push[2]});
+
+    return clip_norm3(out, VC_V_MAX);
 }
 
 // Lowest layer: world-frame velocity setpoint -> native motor actions.
@@ -130,18 +247,36 @@ static inline void velocity_to_motor_actions(const Drone* agent, Vec3 v_sp, floa
     }
 }
 
-// One full velocity-mode control tick: classical setpoint + scaled residual,
-// saturate, convert to motor actions. dv is the policy's 3-float residual
-// (in velocity units after scaling by k_res); k_res = 0 recovers the pure
-// classical Stage 3a benchmark exactly.
-static inline void velocity_control_step(const Drone* agent, const float* dv, float k_res,
-                                         float* motor_actions) {
-    Vec3 u = classical_velocity_setpoint(agent);
+// One full velocity-mode control tick — the four-layer composition of tech
+// doc §8.1 / RL pipeline §2.5 (port of classical_control_step.py):
+//
+//     u_classic = formation_tracking(target, state)   // every tick
+//     u_total   = u_classic + k_res * dv              // RL residual
+//     v_cmd     = safety_filter(u_total, ...)         // APF, then saturate
+//     actions   = velocity_to_motor(v_cmd)            // lowest layer
+//
+// dv is the policy's 3-float residual; k_res = 0 recovers pure classical
+// control exactly (the Stage 3a benchmark and the runtime fallback). The
+// residual is added *before* the safety filter, so the APF's separation
+// guarantee holds regardless of what the policy commands.
+//
+// u_classic is returned via `u_classic_out` (may be NULL) so it can be
+// appended to the observation later (RL pipeline §2.5).
+static inline void velocity_control_step(int idx, Drone* agents, int num_agents,
+                                         const float* dv, float k_res, float dt,
+                                         float* motor_actions, Vec3* u_classic_out) {
+    Drone* agent = &agents[idx];
+
+    Vec3 u_classic = classical_velocity_setpoint(agent, dt);
+    if (u_classic_out != NULL) *u_classic_out = u_classic;
+
+    Vec3 u_total = u_classic;
     if (k_res != 0.0f && dv != NULL) {
-        u.x += k_res * dv[0] * VC_V_MAX;
-        u.y += k_res * dv[1] * VC_V_MAX;
-        u.z += k_res * dv[2] * VC_V_MAX;
-        u = clip_norm3(u, VC_V_MAX);
+        u_total.x += k_res * dv[0] * VC_V_MAX;
+        u_total.y += k_res * dv[1] * VC_V_MAX;
+        u_total.z += k_res * dv[2] * VC_V_MAX;
     }
-    velocity_to_motor_actions(agent, u, motor_actions);
+
+    Vec3 v_cmd = safety_filter(u_total, idx, agents, num_agents);
+    velocity_to_motor_actions(agent, v_cmd, motor_actions);
 }
