@@ -65,6 +65,9 @@
 #ifndef VC_V_MAX
 #define VC_V_MAX 3.0f // velocity-setpoint saturation [m/s]
 #endif
+// dronelib.h normalises the u_classic observation by this gain, but cannot
+// reference it (this header includes that one, not the reverse). Keep in sync.
+_Static_assert(VC_V_MAX == OBS_V_MAX, "OBS_V_MAX (dronelib.h) must track VC_V_MAX");
 // Inner loop:
 #ifndef VC_KV
 #define VC_KV 5.0f              // velocity P gain [1/s] (~2.5x above position)
@@ -269,6 +272,7 @@ static inline void velocity_control_step(int idx, Drone* agents, int num_agents,
 
     Vec3 u_classic = classical_velocity_setpoint(agent, dt);
     if (u_classic_out != NULL) *u_classic_out = u_classic;
+    agent->u_classic = u_classic; // observation builder reads this (§2.5)
 
     Vec3 u_total = u_classic;
     if (k_res != 0.0f && dv != NULL) {
@@ -278,5 +282,7 @@ static inline void velocity_control_step(int idx, Drone* agents, int num_agents,
     }
 
     Vec3 v_cmd = safety_filter(u_total, idx, agents, num_agents);
+    agent->prev_v_cmd = agent->v_cmd; // jerk penalty reads the delta (task e)
+    agent->v_cmd = v_cmd;
     velocity_to_motor_actions(agent, v_cmd, motor_actions);
 }

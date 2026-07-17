@@ -68,7 +68,11 @@ struct Log {
     float episode_return;
     float episode_length;
     float rings_passed;
+    // Ticks spent inside separation_floor of another drone. Upstream declared
+    // and logged this but never incremented it — task (e) wires it to the
+    // inter-drone separation check (FR-15).
     float collisions;
+    float sep_breach; // episodes ended by a separation breach
     float oob;
     float ring_collision;
     float timeout;
@@ -147,6 +151,22 @@ typedef struct {
     // classical controller integral state (velocity_controller.h); world
     // frame, [m*s]. Caller-owned so the control law stays a pure function.
     Vec3 integ;
+
+    // Last classical velocity setpoint (velocity_controller.h), world frame
+    // [m/s], for the observation builder — the policy sees the baseline its
+    // residual is correcting (RL pipeline §2.5). Stays zero on the native
+    // motor path, where no classical law runs.
+    Vec3 u_classic;
+
+    // Final commanded velocity setpoint (post-residual, post-APF) and its
+    // previous value, for the jerk penalty (task e). Both stay zero on the
+    // native motor path, so the jerk term is identically zero there.
+    Vec3 v_cmd;
+    Vec3 prev_v_cmd;
+
+    // Seconds the drone has been outside align_dist of its target, for the
+    // NFR-36 2 s rule (task e). Reset to 0 whenever it is aligned.
+    float t_unaligned;
 
     // target buffer
     Target* buffer;
@@ -316,6 +336,10 @@ static inline void init_drone(Drone* drone, unsigned int* rng, float dr) {
     drone->state.omega = (Vec3){0.0f, 0.0f, 0.0f};
     drone->state.quat = (Quat){1.0f, 0.0f, 0.0f, 0.0f};
     drone->integ = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->u_classic = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->v_cmd = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->prev_v_cmd = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->t_unaligned = 0.0f;
 }
 
 static inline void compute_derivatives(State* state, Params* params, float* actions,
@@ -546,9 +570,26 @@ static inline bool check_collision(Drone* agent, Drone* others, int num_agents) 
     return nearest_dist < 0.1f;
 }
 
+// Velocity is measured *relative to the target* (Stage 3 task e).
+//
+// These two functions score "is the drone on its target and settled". The
+// upstream form used absolute velocity, which is correct only when the target
+// is static. A FORMATION drone must cruise with its centroid at ~1 m/s, so
+// absolute velocity penalised it for performing the task — measured at 15.2%
+// of score, and worse, `reward` contains alpha_hover*potential, so a residual
+// would be rewarded for slowing down, i.e. for leaving the formation.
+//
+// This is exactly identity for every task with a static target: HOVER, ORBIT,
+// CUBE and FLAG all set target->vel = 0. IDLE/FOLLOW/CONGO carry the upstream
+// per-tick target->vel convention (see tasks.h) and shift slightly; they are
+// untrained demo tasks.
+//
+// omega is deliberately left absolute: the velocity cascade drives yaw rate to
+// zero (yaw is damping-only), so drones do not rotate with the formation — the
+// slot geometry rotates around them.
 float hover_potential(Drone* agent, float hover_dist, float hover_omega, float hover_vel) {
     float dist = norm3(sub3(agent->target->pos, agent->state.pos));
-    float vel = norm3(agent->state.vel);
+    float vel = norm3(sub3(agent->state.vel, agent->target->vel));
     float omega = norm3(agent->state.omega);
 
     float d = 1.0f / (1.0f + dist / hover_dist);
@@ -558,9 +599,10 @@ float hover_potential(Drone* agent, float hover_dist, float hover_omega, float h
     return d * (0.7f + 0.15f * v + 0.15f * w);
 }
 
+// Velocity relative to the target — see hover_potential above.
 float check_hover(Drone* agent, float hover_dist, float hover_omega, float hover_vel) {
     float dist = norm3(sub3(agent->target->pos, agent->state.pos));
-    float vel = norm3(agent->state.vel);
+    float vel = norm3(sub3(agent->state.vel, agent->target->vel));
     float omega = norm3(agent->state.omega);
 
     float d = dist / (hover_dist * 10.0f);
@@ -571,7 +613,49 @@ float check_hover(Drone* agent, float hover_dist, float hover_omega, float hover
     return score > 0.0f ? score : 0.0f;
 }
 
-void compute_drone_observations(Drone* agent, float* observations) {
+// --- Observation layout (Stage 3 task d) ------------------------------------
+//
+// Single source of truth for the obs width; binding.c's OBS_SIZE and the
+// Python policy's input dim both derive from this.
+//
+//   [ 0.. 2] body linear velocity
+//   [ 3.. 5] body angular velocity
+//   [ 6.. 9] orientation quaternion
+//   [10..15] two-scale body-frame offset to target (coarse, fine)
+//   [16..18] target normal, body frame
+//   [19..27] 3 neighbour relative positions, body frame, by agent index
+//   [28..32] formation mode one-hot
+//   [33]     time to next formation mode change, tanh-scaled
+//   [34..36] u_classic, body frame — the baseline the residual corrects
+//   [37..40] motor RPMs  <-- must stay LAST (upstream invariant)
+//
+// The swarm is 4 drones (tech doc §2), so a drone has exactly 3 neighbours —
+// every other agent in its env. At num_agents=1 (the Stage 3a benchmark) there
+// are none and the block is zeros, which is the plan's "stub as zeros for
+// Stage 3" without a stub: the same code serves Stage 4's num_agents=4 with
+// real neighbours. Absent neighbours read as (0,0,0), i.e. co-located; that is
+// only ambiguous if presence varies within a run, and it does not — num_agents
+// is fixed per env.
+#define OBS_BASE 19
+#define OBS_N_NEIGHBORS 3
+#define OBS_N_FORM_MODES 5 // mirrors FORM_MODE_N in tasks.h (asserted there)
+#define DRONE_OBS_SIZE (OBS_BASE + 3 * OBS_N_NEIGHBORS + OBS_N_FORM_MODES + 1 + 3 + 4)
+
+// Body-frame neighbour offsets live on a ~0.4-3 m scale (separation floor to
+// formation diameter), so they need their own tanh scale: the target's coarse
+// 0.1 is tuned for the 30 m grid and would squash them all to near zero.
+#define OBS_NEIGHBOR_SCALE 0.5f
+#define OBS_TTM_SCALE 0.5f // time-to-mode-change: tanh(0.5*t), ~0.76 at 2 s
+// u_classic is normalised by the setpoint saturation. velocity_controller.h
+// owns that gain but includes this header, so it cannot be referenced here;
+// it static-asserts VC_V_MAX against this instead.
+#define OBS_V_MAX 3.0f
+
+// formation_mode < 0 means "not the FORMATION task": the one-hot and the
+// time-to-change slot read as zeros. time_to_mode_change is in seconds.
+void compute_drone_observations(Drone* agent, Drone* agents, int num_agents, int agent_idx,
+                                int formation_mode, float time_to_mode_change,
+                                float* observations) {
     int idx = 0;
 
     // choose the hemisphere with w >= 0
@@ -613,6 +697,35 @@ void compute_drone_observations(Drone* agent, float* observations) {
     observations[idx++] = normal_body.x;
     observations[idx++] = normal_body.y;
     observations[idx++] = normal_body.z;
+
+    // Neighbours: every other agent in this env, in agent-index order (a fixed
+    // permutation, so a slot always means the same drone). Zero-padded.
+    int written = 0;
+    for (int j = 0; j < num_agents && written < OBS_N_NEIGHBORS; j++) {
+        if (j == agent_idx) continue;
+        Vec3 rel = quat_rotate(q_inv, sub3(agents[j].state.pos, agent->state.pos));
+        observations[idx++] = tanhf(rel.x * OBS_NEIGHBOR_SCALE);
+        observations[idx++] = tanhf(rel.y * OBS_NEIGHBOR_SCALE);
+        observations[idx++] = tanhf(rel.z * OBS_NEIGHBOR_SCALE);
+        written++;
+    }
+    for (int j = written; j < OBS_N_NEIGHBORS; j++) {
+        observations[idx++] = 0.0f;
+        observations[idx++] = 0.0f;
+        observations[idx++] = 0.0f;
+    }
+
+    // Formation mode one-hot, then time to the next scheduled mode change.
+    for (int m = 0; m < OBS_N_FORM_MODES; m++)
+        observations[idx++] = (m == formation_mode) ? 1.0f : 0.0f;
+    observations[idx++] = (formation_mode < 0) ? 0.0f : tanhf(time_to_mode_change * OBS_TTM_SCALE);
+
+    // The classical baseline this policy's residual is added to (§2.5), body
+    // frame and normalised by the setpoint saturation. Zero on the motor path.
+    Vec3 u_classic_body = quat_rotate(q_inv, agent->u_classic);
+    observations[idx++] = clampf(u_classic_body.x / OBS_V_MAX, -1.0f, 1.0f);
+    observations[idx++] = clampf(u_classic_body.y / OBS_V_MAX, -1.0f, 1.0f);
+    observations[idx++] = clampf(u_classic_body.z / OBS_V_MAX, -1.0f, 1.0f);
 
     // rpms should always be last in the obs
     observations[idx++] = agent->state.rpms[0] / agent->params.max_rpm;

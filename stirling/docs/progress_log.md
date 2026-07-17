@@ -7,6 +7,556 @@ this records what actually landed.
 
 ---
 
+## 2026-07-17 — Stage 3a classical floor recorded (task f); `perf` cannot judge 3b
+
+`bash stirling/tests/run_stage3a_bench.sh` — headless, ~10 s, no policy and no
+GPU (`k_res = 0` makes actions irrelevant, so there is nothing to infer). Per
+the plan: "no RL training in this run — it's a sim validation pass".
+
+### The floor
+
+Pure classical control on FORMATION, 256 envs × 4 horizons = 4096 episodes:
+
+| Metric | **SWARM (n=4)** | SOLO (n=1) |
+| --- | ---: | ---: |
+| episodes | 4096 | 1024 |
+| score | **970.19** | 967.14 |
+| perf | **0.9716** | 0.9713 |
+| episode_return | **55.55** | 54.58 |
+| episode_length | 1024.0 (full) | 1024.0 (full) |
+| ema_dist | **0.0217** | 0.0224 |
+| ema_vel | **0.0246** | 0.0240 |
+| oob | **0** | 0 |
+| collisions / sep_breach | **0 / 0** | 0 / 0 |
+| mean tracking error | **0.0359 m** | 0.0381 m |
+| worst tracking error | 0.6514 m | 0.6842 m |
+| min separation | **0.6045 m** | — |
+
+> Re-measured 2026-07-17 after the mode scheduler landed. The controller is
+> unchanged; `formation_reset` now draws one extra RNG value, shifting the
+> seeded sequence. Every metric moved <0.5% (score 973.95 → 970.19) — sampling
+> noise across 4096 episodes. Box-only, per the competition brief.
+
+**Compare 3b against the SWARM row.** The plan specified `num_agents = 1` with
+stubbed neighbours; the swarm is 4 (tech doc §2), neighbours are real at 4, and
+3b trains at 4 — so the floor must be measured at 4 or it is a different task.
+SOLO is kept as the no-APF, no-neighbour reference; the two barely differ,
+which says the APF is not doing meaningful work in steady box flight.
+
+**NFR-37 in practice:** 0 breaches over 4096 episodes, min separation 0.625 m
+against a 0.40 m floor. That does not upgrade NFR-37 from PARTIAL — the APF
+still has no hard guarantee above ~1.75 m/s head-on closing — but the box
+scenario stays well inside the envelope, as claimed.
+
+### Fixed first: the spawn started episodes in breach
+
+The initial run reported min separation **0.077 m** with 37 breach episodes.
+That was not the controller: `FM_SPAWN_DIST` was set to 1.0 m by taste, against
+a 1.2 m box side, so two adjacent drones could close to 1.2 − 2×1.0 = **−0.8 m**
+— they could spawn on top of each other, and **1% of spawn pairs began below the
+0.40 m floor**. Episodes started in a state violating the safety requirement,
+and the APF spent the first ticks digging out of a violation it did not cause.
+
+`FM_SPAWN_DIST` is now **0.35 m**, bounded by geometry rather than taste:
+`FM_BOX_SIDE − 2*FM_SPAWN_DIST ≥ 0.40` gives 0.5 m of guaranteed margin. A new
+`[formation spawn]` gate sweeps the real random distribution over 2000 resets
+(12000 pairs) — min 0.563 m, 0 breaches. Effect on the floor: min separation
+0.077 → 0.625 m, collisions 2365 → 0, mean tracking error 0.074 → 0.034 m.
+
+### `perf` and `score` cannot judge 3b — use `ema_dist`
+
+The classical controller sits at **97.9% of `perf`'s ceiling**, so there is 2.1%
+of headroom for the residual to compete for. That is a property of the metric,
+not of the controller: `check_hover`'s distance term is scaled by
+`hover_dist * 10` = **1.0 m**, tuned for HOVER acquiring a target up to 5 m
+away — but formation tracking errors are **0.034 m**, so the term contributes
+0.7 × 0.034 = 0.024 and the metric barely moves. A residual that *halved*
+tracking error would move `perf` from 0.979 to ~0.985 — inside run-to-run noise.
+
+`ema_dist` (0.0188) and mean tracking error (0.0340 m) are discriminative: the
+same halving shows up as a clean 2× change. **Judge 3b on those.** Tightening
+`--env.hover-dist` for FORMATION runs would also re-scale `perf`, but changes
+the reward as well, so it belongs in the 3b sweep rather than being set here by
+assertion.
+
+`ema_vel` is now measured against the target too, for the same reason the reward
+is: it previously reported 1.0034 — the centroid's cruise speed, which says
+nothing about how well the slot is held. It now reads 0.0173, the actual
+slot-holding error rate. Identity for static-target tasks.
+
+---
+
+## 2026-07-17 — Centroid speed is a performance choice, and the planner was the bottleneck
+
+Started from a good question: the classical floor is strong on accuracy, so
+where can a residual actually add value? Answer: **the speed axis, which nobody
+had looked at.** Chasing it found a defect in my own path planner that was
+costing more than any policy could add.
+
+### The setup: speed was never a decision
+
+`FM_CRUISE_SPEED` was a hardcoded **1.0 m/s**. The classical controller does not
+have a poor speed policy — it has **none**; it flies at whatever that constant
+says. Meanwhile the competition scores **course time (6 pts) exactly as heavily
+as formation accuracy (6 pts)**, and our env models only accuracy: the reward
+has no progress or time term at all. So Stage 3b was being set up to compete on
+the one axis where the classical is already at 0.97/1.0, while the axis where it
+has no policy at all went unmeasured.
+
+### The trap this nearly walked into
+
+A first sweep showed accuracy degrading steeply with speed and the separation
+floor breaching at 2.8 m/s — an apparently real speed/accuracy tradeoff. Had we
+built the speed action then, RL would have found ~2.0–2.5 and we would have
+reported *"the residual doubles course speed"*. **That result would have been
+fake**: it would have been beating an arbitrary constant, not the controller.
+
+### The actual bottleneck: an untrackable reference trajectory
+
+The centroid decelerated smoothly into a waypoint (`FM_ARRIVE_GAIN`) but then
+**accelerated instantly** — at capture, distance jumps, so speed stepped from
+0.5 m/s straight back to cruise *in a new direction*. The reference trajectory
+had unbounded acceleration; the tracker could only chase it. The MuJoCo
+reference ramps its centroid, and this is why.
+
+`FM_ACCEL_MAX = 2.0 m/s²` now slews the velocity **vector** (covering direction
+changes, not just speed). `centroid.vel` remains exactly the rate applied, so
+the feedforward invariant still holds (0.0014 m/s). Heading now follows course
+made good rather than the desired direction, so it cannot lead a turn the
+centroid has not taken.
+
+| @2.6 m/s | before | after |
+| --- | ---: | ---: |
+| worst error | 1.60 m | **0.38 m** |
+| flight separation | 0.437 m | **0.977 m** |
+| perf | 0.780 | **0.918** |
+
+**Most of the "speed/accuracy tradeoff" was this bug.** With a trackable
+centroid, worst-case error is flat at ~0.38 m from 1.0 to 2.6 m/s and *nothing
+breaches the floor anywhere in range*.
+
+### What actually limits speed: NFR-36, not accuracy
+
+| speed | perf | flight_sep | worst_err | reform→box | authority |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1.0 | 0.981 | 1.165 | 0.350 | 1.66 s | 2.0 |
+| 2.0 | 0.943 | 1.166 | 0.378 | 1.63 s | 1.0 |
+| **2.2** | 0.932 | 1.166 | 0.380 | **1.61 s** | 0.8 |
+| 2.4 | 0.925 | 1.064 | 0.382 | 1.61 s | 0.6 |
+| 2.6 | 0.918 | 0.977 | 0.378 | **2.15 s ✗** | 0.4 |
+| 2.8 | 0.885 | 0.606 | 0.785 | **4.05 s ✗** | 0.2 |
+
+Reform is flat at ~1.6 s to 2.4 m/s, then cliffs. The cause is arithmetic: a
+reform must fit in the correction authority left under `VC_V_MAX` (3.0) after
+cruising. At 2.6 that is 0.4 m/s — not enough to move drones ±1.125 m
+vertically inside 2 s.
+
+**Shipped: `formation_speed = 2.2`**, now a config key rather than a constant.
+2.4 is the fastest in-spec value; 2.2 sits two steps from the cliff instead of
+one and leaves 0.8 m/s of authority, which the Stage 3b residual must also fit
+inside (it is added *before* the `VC_V_MAX` clip). It still more than doubles
+the old default's throughput.
+
+### Consequence: the residual's speed story needs Stage 4
+
+On an **open, box-only course there is no reform to prepare for**, so NFR-36
+does not bind and the limit is accuracy (~2.6). With deviations possible, a
+*fixed* speed must be conservative enough to reform **at all times** — 2.2/2.4.
+A *variable* speed only has to be reform-ready when a reform is imminent: cruise
+2.6+ on clear stretches, bank authority approaching an obstacle, deviate,
+reform, accelerate out. **That gap is the residual's real value, and it is
+exactly what no constant can capture** — but demonstrating it needs an obstacle
+to trigger the deviation, i.e. Stage 4. The `time-to-next-mode-change`
+observation already exists for precisely this signal and is inert until then.
+
+So Stage 3b, on an open course, still competes mainly on tracking accuracy
+against perf 0.932. The speed mechanism is worth building now (it is free —
+`dv[3]` is unused — and it is the Stage 4 seam), but **a Stage 3b speed result
+should not be expected or claimed**.
+
+### Also found
+
+A turn landing mid-reform pushes reform to **4.0 s**, violating NFR-36. The
+`[box reform]` gate now flies a straight course, as the reference scenario
+does, so it measures the mode change rather than timing a turn with it — but
+**the coincidence is a real failure mode on a real course**, not just a test
+artifact, and obstacle-triggered deviations will not politely avoid corners.
+Worth carrying into Stage 4.
+
+### Stage 3a floor re-measured at 2.2 m/s
+
+Superseding both earlier records. `bash stirling/tests/run_stage3a_bench.sh`:
+
+| Metric | SWARM (n=4) @ 2.2 m/s | (was, @1.0 m/s) |
+| --- | ---: | ---: |
+| score | **935.88** | 970.19 |
+| perf | **0.9324** | 0.9716 |
+| episode_return | **37.71** | 55.55 |
+| ema_dist | **0.0578** | 0.0217 |
+| mean tracking error | **0.0662 m** | 0.0359 m |
+| worst tracking error | **0.4510 m** | 0.6514 m |
+| min separation | **0.5649 m** | 0.6045 m |
+| oob / collisions / sep_breach | **0 / 0 / 0** | 0 / 0 / 0 |
+
+The floor is *lower* on every accuracy metric because the task is now twice as
+fast — that is the point, and it is why the floor had to be re-measured rather
+than compared across speeds. Note worst-case error actually **improved**
+(0.65 → 0.45 m) despite the doubled speed: the bounded-acceleration centroid
+more than paid for the extra pace.
+
+---
+
+## 2026-07-17 — Competition brief read; mode scheduler is a fixture, not the task; Stage 3a floor recorded
+
+The official **2026 Tomorrow Trials Competition Brief** (`stirling/docs/`) is now
+in the repo. Reading it settled an open design question and corrected a mistake.
+
+### What the brief actually requires
+
+> - Drones must maintain a 3D box formation throughout the course.
+> - The dimensions of the 'box' can be set by the team, and can change in size
+>   as required to best meet the course, but a box structure should try to be
+>   maintained throughout.
+> - Temporary deviations from the formation are allowed **only when avoiding
+>   obstacles**, but the formation must be re-established within 2 seconds.
+
+Three consequences:
+
+1. **Deviations are obstacle-gated, not routine.** A timer-driven deviation on
+   an open course is a rules violation *and* a scored loss — the scoring table
+   pays 6 pts for "formation consistently tight and stable" against 3 for
+   "frequent deviations, recovery usually adequate".
+2. **`compressed` is not a deviation — it is a permitted box resize.** The tech
+   doc's mode table (§4.2) classes it "TRANSIENT deviation"; the brief
+   explicitly allows changing the box's size. **The tech doc should be
+   corrected.** The modes split into a *box family* (box, compressed — always
+   legal) and *deviations* (line, stack, diamond — obstacle-only, ≤2 s, each
+   costing formation points). Encoded as `formation_mode_is_box()`.
+3. **The 2 s window is for re-establishing the box**, confirming the reading
+   already applied to the reform gate: the clock runs on deviation → box, not
+   on box → deviation.
+
+### The mode scheduler: added, then correctly demoted
+
+A timer-driven `box <-> deviation` scheduler was added on the strength of
+`demo_formation.py`'s 8-transition schedule. That was a mistake of category:
+**the demo is a validation fixture that sweeps all five modes to prove the
+manager works — it is not the mission profile.** Its 3–6 s dwells even exceed
+the brief's own 2 s reform window, which a legal obstacle deviation never
+would.
+
+So `formation_modes` now defaults to **0 (box-only)**, which is what the brief
+requires and what the original Stage 3 scoping said ("modes are
+obstacle-traversal deviations; obstacles are Stage 4"). The scheduler is kept
+behind the flag as a validation fixture and the Stage 4 obstacle-trigger seam.
+The mode one-hot and time-to-change observations are consequently constant in
+Stage 3 — honest, since nothing may legally trigger a deviation yet.
+
+### Kept from the exercise — two findings worth the detour
+
+- **`line <-> diamond` blends are unsafe.** A linear blend interpolates each
+  slot offset independently, so separation *during* a transition can dip below
+  both endpoints: line→diamond reaches **0.330 m** against the 0.40 m floor,
+  from endpoints of 1.000 m and 1.221 m. Every `box <-> deviation` blend stays
+  ≥ 0.636 m. **Routing every transition through box is therefore a safety
+  property, not doctrine** — and it is what the reference's schedule does.
+  Gated by `[blend safety]`, which also asserts the direct route *is* unsafe,
+  so a future "optimisation" that skips box fails loudly.
+- **A blend must never be interrupted.** `formation_set_mode` discards a
+  partial blend (as the Python reference does), so retargeting mid-transition
+  steps the target position. A `_Static_assert` pins
+  `FM_MODE_DWELL_MIN > FM_BLEND_TIME`, making it unreachable rather than
+  unlikely.
+
+### NFR-36 across mode transitions — new gate
+
+`[box reform]` reforms box from each deviation, measured as the reference does
+(max slot error < 0.15 m held 0.5 s). All pass, but the margin is thin:
+
+| Transition | box → mode | **mode → box** (the requirement) | min sep |
+| --- | ---: | ---: | ---: |
+| line | 0.56 s | 0.54 s | 0.765 m |
+| stack | 1.70 s | **1.65 s** | 0.601 m |
+| compressed | 0.00 s | 0.00 s | 0.632 m |
+| diamond | 0.37 s | 0.35 s | 0.934 m |
+
+**stack → box has only 0.35 s of margin on the 2 s rule** — the tightest number
+in the project. Stack is the largest geometric change (a horizontal square to a
+vertical column, ±1.125 m in z). If the platform slips or the residual adds
+overhead, this is what breaks first. Compressed settles instantly, as expected
+for a resize the tracker follows inside its threshold.
+
+### Stage 3a floor re-measured
+
+The floor recorded in the task (f) entry below has been **superseded** — see
+that entry, whose table now carries the current numbers. Nothing about the
+controller changed; `formation_reset` now draws one extra RNG value (the first
+`next_mode_t`), which shifts the whole seeded sequence and therefore the
+waypoints and spawns. The floor moved by <0.5% on every metric (score
+973.95 → 970.19, ema_dist 0.0188 → 0.0217), which is sampling noise across
+4096 episodes, not a regression.
+
+---
+
+## 2026-07-17 — Reward extension (task e): velocity measured against the target
+
+Closes the blocker flagged in the entry below. Stage 3 (a)–(e) are done; (f) is
+unblocked.
+
+### The fix that mattered: relative velocity
+
+`hover_potential` and `check_hover` scored "on target and settled" using
+**absolute** velocity, which is only correct for a static target. A FORMATION
+drone must cruise with its centroid, so the metric penalised it for performing
+the task — and since `reward` contains `alpha_hover * potential`, a residual
+would have been rewarded for slowing down, i.e. for leaving formation. Both now
+use `|v - v_target|`.
+
+**This is exact identity for every static-target task.** HOVER, ORBIT, CUBE and
+FLAG all set `target->vel = 0`, so `|v - v_target| == |v|` — asserted directly
+by a gate rather than argued. Only IDLE/FOLLOW/CONGO shift; they carry the
+upstream per-tick `target->vel` convention and are untrained demo tasks. `omega`
+is deliberately left absolute: the cascade drives yaw rate to zero (yaw is
+damping-only), so drones do not rotate with the formation — the slot geometry
+rotates around them.
+
+Effect on the FORMATION potential, pure classical: **0.66**, against HOVER's
+0.65 — the two tasks are now scored on comparable footing.
+
+### New terms, all inert by default
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `alpha_jerk` | 0.0 | penalty on `\|v_cmd - prev_v_cmd\|`; identically zero on the motor path, where `v_cmd` is never written |
+| `alpha_align` | 0.0 | penalty per second unaligned beyond `align_time` — NFR-36's 2 s rule as a graduated penalty |
+| `align_dist` | 0.15 | "on slot" tolerance (matches the NFR-36 test threshold) |
+| `align_time` | 2.0 | grace window |
+| `separation_floor` | 0.0 | inter-drone floor (FR-15); **0 skips the O(n²) check entirely** |
+| `separation_terminates` | 0 | whether a breach ends the episode |
+
+`separation_floor = 0` is what HOVER wants: it packs 64 independent drones with
+unrelated targets into one env, so they routinely pass close and a breach there
+is meaningless — and skipping the check keeps its cost off the Stage 1 path.
+
+The default HOVER reward is **bit-identical** to Stage 1: a gate reconstructs
+the pre-(e) formula and measures `max |reward - upstream| = 0.00e+00`.
+
+`Log.collisions` was declared, reset and logged upstream but **never
+incremented** — every training log so far reported a structural zero. It is now
+wired to the separation check, alongside a new `sep_breach` count.
+
+### Alpha re-tune: deferred to the 3b sweep, deliberately
+
+The plan asks to re-evaluate the four alphas against FORMATION. Measured
+per-tick contributions, pure classical:
+
+| Term | FORMATION | HOVER |
+| --- | ---: | ---: |
+| `alpha_hover * potential` | **+0.047** | +0.046 |
+| `alpha_dist * d(dist)` | −0.0013 | +0.0018 |
+| `alpha_shaping * d(potential)` | +0.00006 | +0.00044 |
+| `alpha_omega * \|omega\|` | 0.00025 | 0.00023 |
+
+`alpha_hover * potential` dominates steady state by ~30×; the convergence terms
+telescope to ~0 once on-slot, but still drive the 1 m spawn transient, so they
+are not dead weight. With the potential now task-correct, the alphas are not
+*wrong* for FORMATION — they are untuned, and tuning them is a sweep, not an
+analytical exercise. `config/drone.ini` already has `[sweep.env.alpha_*]`
+sections for exactly this.
+
+`alpha_jerk`/`alpha_align` are left at 0 rather than guessed: both are latent
+under pure classical control (jerk `|dv_cmd|` = 0.0048 m/s; tracking error
+0.07 m never leaves `align_dist`, so the timer never runs), so no defensible
+size exists until the residual is in the loop.
+
+### Deferred, with reasons
+
+- **Reform-within-2s bonus window** (plan: "200-step exponential bonus after a
+  mode-change event") — there are no mode-change events in Stage 3; the
+  scheduler is Stage 4, and no disturbance event exists in the env either (the
+  NFR-36 test injects its kick by hand). The same 2 s rule is live now as the
+  `alpha_align` penalty, so the requirement is represented.
+- **Obstacle-contact termination** — no obstacle primitives until Stage 4.
+
+---
+
+## 2026-07-17 — FORMATION spawn fix; (f) is blocked on (e), with the cost measured
+
+Found while setting up (f), the Stage 3a classical benchmark. Two problems, one
+fixed, one flagged for a decision.
+
+### Fixed: FORMATION spawned drones nowhere near their slots
+
+`reset_agent` places a drone at a random grid point. That is right for HOVER —
+`set_target_hover` then places the *target* near the *drone*. FORMATION inverts
+the dependency: the slot is wherever the centroid is, so the drone must move to
+it, not the reverse. The random spawn landed **17–58 m** off-slot against a 6 m
+oob margin (`hover_target_dist + 1`), so episodes terminated on the first tick.
+
+Measured over 40 s with 4 drones, before the fix:
+
+| | before | after |
+| --- | ---: | ---: |
+| oob terminations | 1285 | **0** |
+| timeouts | 12 | 12 |
+| mean tracking error | 1.574 m | **0.064 m** |
+
+The task was ~99% reset churn, and every metric from it was meaningless. Fixed
+with `formation_spawn_state()`: the drone starts uniformly within
+`FM_SPAWN_DIST` (1.0 m) of its slot and matches the slot velocity, so an
+episode begins in formation rather than accelerating into it.
+
+**Why the tests missed it:** the in-env test placed drones on-slot by hand and
+ran 800 ticks — under `HORIZON` (1024), so no reset ever fired. A new gate
+(`[formation life]`) runs ~4 horizons and asserts spawn offset plus **oob = 0**.
+
+### Resolved by the task (e) entry above — original finding retained below
+
+### Flagged: the reward/metric is HOVER-shaped, and (e) is not done
+
+`check_hover` and `hover_potential` both use **absolute** velocity
+(`norm3(agent->state.vel)`), compared against `hover_vel = 0.1`. A FORMATION
+drone must cruise with its centroid at ~1 m/s, so the metric penalises it for
+performing the task. Measured on a clean run (pure classical, `k_res=0`):
+
+| | value |
+| --- | ---: |
+| mean tracking error | 0.064 m |
+| mean \|v\| (absolute) | 1.031 m/s — the required cruise |
+| mean \|v − v_target\| | 0.088 m/s — the real tracking error rate |
+| `check_hover`, absolute velocity (today) | 0.778 |
+| `check_hover`, velocity relative to target | 0.918 |
+
+**The drone loses 15.2% of its score purely for cruising.** For (f) alone this
+is survivable — a floor and a residual measured on the same metric still
+compare. But `reward` includes `alpha_hover * curr`, so (g) would train a
+residual that is rewarded for *slowing down*, i.e. for leaving the formation.
+That is a training pathology, not a scoring quirk, and the plan already
+sequences (e) before (f).
+
+The natural fix is to measure velocity (and the potential's velocity term)
+relative to `target->vel`. It has a clean property: **HOVER, ORBIT, CUBE and
+FLAG all set `target->vel = 0`, so it is exactly identity for them** — no
+Stage 1 behaviour change. Only IDLE/FOLLOW/CONGO shift, and those carry the
+per-tick `target->vel` units artifact (see the task-c entry) and are untrained
+demo tasks. Not taken unilaterally: (e) also covers re-weighting the four
+alphas, reform shaping, a jerk penalty, and a richer termination set.
+
+---
+
+## 2026-07-16 — Observation extension 23 → 41 (task d); `num_drones=4` is the FORMATION config
+
+Stage 3 tasks (a)–(d) are now done. Next is (f), the Stage 3a classical
+benchmark.
+
+### Obs layout (`dronelib.h`, single source of truth)
+
+`DRONE_OBS_SIZE` is now derived, and `binding.c`'s `OBS_SIZE` and the Python
+policy's input dim both follow it (`vec.obs_size` ← `get_obs_size()`), so no
+hardcoded width remains anywhere.
+
+| Index | Content |
+| --- | --- |
+| 0–18 | unchanged upstream block (body vel, omega, quat, two-scale target offset, target normal) |
+| 19–27 | 3 neighbour relative positions, body frame, by agent index |
+| 28–32 | formation mode one-hot |
+| 33 | time to next mode change, tanh-scaled |
+| 34–36 | `u_classic`, body frame — the baseline the residual corrects (§2.5) |
+| 37–40 | motor RPMs — **still last** (upstream invariant) |
+
+Neighbours needed their own tanh scale (0.5): they live on a 0.4–3 m scale and
+the target's coarse 0.1 is tuned for the 30 m grid, which would squash them to
+near zero. `u_classic` is stored on `Drone` by `velocity_control_step` and
+normalised by the setpoint saturation; it stays zero on the native motor path,
+where no classical law runs, which is honest rather than a stub.
+
+**Existing checkpoints no longer load** — the policy's input dim changed 23 →
+41. Expected; the Stage 1 baseline was already retired.
+
+### `num_drones` is per-env packing, not throughput — FORMATION needs 4
+
+The plan called for stubbing neighbours as zeros in Stage 3 and wiring real
+ones in Stage 4. That turned out to be unnecessary, and chasing it surfaced a
+config defect worth recording.
+
+`vecenv.h`'s `my_vec_init` spawns env instances **until `total_agents` is
+reached**. So `total_agents = 2048` is the throughput knob; `num_drones` only
+sets how many drones share one `DroneEnv` — i.e. one formation, one APF
+neighbourhood. Upstream ships `num_drones = 64` because HOVER treats every
+drone as an independent episode, so packing is free. For FORMATION it is not:
+one env holds one formation, so 64 drones alias 16-to-a-slot. Measured, before
+the guard landed:
+
+| `num_drones` | coincident target pairs | min separation over 4 s |
+| ---: | ---: | ---: |
+| 4 | 0 | 0.583 m |
+| 16 | 24 | 0.178 m ✗ |
+| 64 | 480 | 0.052 m ✗ |
+
+`num_drones = 4` costs nothing — it yields 512 env instances instead of 32, at
+the same 2048 agents. And since the swarm **is** 4 drones (tech doc §2), a
+drone has exactly 3 neighbours: every other agent in its env. So the neighbour
+block needs no stub — the same code gives zeros at `num_agents = 1` (the
+Stage 3a benchmark config) and real neighbours at 4 (Stage 4), with no rewrite.
+
+`c_reset` now **hard-errors** if `task=formation` and `num_drones > 4`, rather
+than training on aliased slots. Verified: 1 and 4 reset cleanly, 64 exits 1
+with the config fix in the message.
+
+**Consequence for (f)/(g):** the FORMATION runs need `task = 2` and
+`num_drones = 4`. The default stays HOVER; these are overrides (below).
+
+### The velocity stack was unreachable from training
+
+Found while working out what a "FORMATION config" is. `pufferl.load_config`
+builds **one CLI flag per key in `config/drone.ini`**, then passes the `[env]`
+section to `my_init` as kwargs. `control_mode` and `k_res` were never in the
+ini — `binding.c` reads them with `dict_get_unsafe` and falls back to defaults,
+which is what kept task (a) inert for the Stage 1 regression. The side effect:
+no key ⇒ no generated flag ⇒ **no way to select the velocity stack from a
+training run at all**. Every Stage 3 control-path run was blocked on this, not
+just (f).
+
+Both are now in `[env]` with inert values (`control_mode = 0`, `k_res = 0.0`),
+so the default run is unchanged — HOVER on the native motor path — but both are
+overridable. No second config file: FORMATION is an invocation.
+
+```
+--env.task 2 --env.num-drones 4 --env.control-mode 1
+```
+
+`k_res` is written `0.0`, not `0`, deliberately: the flag's type comes from
+`ast.literal_eval` of the ini value, so `0` would type it `int` and silently
+truncate `--env.k-res 0.5` to `0` — which is exactly the sweep (g) depends on.
+Verified end-to-end: defaults resolve to `task=1, control_mode=0, k_res=0.0`,
+and the override above resolves to `task=2, num_drones=4, control_mode=1` with
+`k_res=0.5` surviving as a float.
+
+### Task ids renumbered: FORMATION is 2
+
+`FORMATION` now sits directly after `HOVER` rather than appended after the
+upstream demo tasks — it is this project's task and belongs at the front.
+`HOVER` stays at **1**, so the shipped config default is unchanged; `ORBIT`
+through `RACE` shift down one (`ORBIT` 2→3 … `RACE` 7→8). Only
+`config/drone.ini`'s `task = 1` selects a task by integer anywhere in the repo,
+and it still means HOVER; everything else compares enum names, and `get_task()`
+resolves by name. A test now round-trips every `TASK_NAMES` entry through
+`get_task()` and pins `HOVER == 1` / `FORMATION == 2`, since nothing in the
+compiler ties the name table to the enum and a silent remap would be ugly to
+debug.
+
+### Tests
+
+One new gate covering the layout: width, RPMs-last, bounded/finite across all
+agents, real neighbour geometry at `num_agents=4` vs zeros at 1, one-hot only
+under FORMATION, and `u_classic` live under velocity control but zero on the
+motor path. Two `_Static_assert`s pin the constants that must mirror across
+headers (`OBS_N_FORM_MODES` ↔ `FORM_MODE_N`, `OBS_V_MAX` ↔ `VC_V_MAX`) — the
+include direction (`velocity_controller.h` → `dronelib.h`) prevents referencing
+them directly.
+
+---
+
 ## 2026-07-16 — FORMATION task (task c): formation manager C port + moving-centroid task
 
 Ported `stirling/controller/formation_manager.py` into `ocean/drone/tasks.h`
@@ -15,8 +565,8 @@ done; next is (d), the observation extension.
 
 ### What landed
 
-- **`FORMATION` task** appended to the `DroneTask` enum (`TASK_NAMES`:
-  `"formation"`, index 8). `set_target(...)` now takes the env's `Formation*`;
+- **`FORMATION` task** added to the `DroneTask` enum (`TASK_NAMES`:
+  `"formation"`). `set_target(...)` now takes the env's `Formation*`;
   all three call sites (reset, in-step reset, render task-cycling) updated.
 - **Formation manager (tech doc §4.2–§4.3)** — slot-offset tables for all 5
   modes (box home, line, stack, compressed, diamond), `Rz(yaw)` heading

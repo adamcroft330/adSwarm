@@ -15,8 +15,10 @@ of the Stage 1 baseline.
 > | (a) velocity-setpoint wrapper | **Done, merged** (PR #4). Proven inert at `control_mode=0` by byte-identical checkpoints |
 > | (b) classical controller C port | **Done** — `ocean/drone/velocity_controller.h`. NFR-36 passes in-env: reform 1.25 s, min sep 0.488 m (MuJoCo ref 1.29 / 0.49) |
 > | (c) FORMATION task | **Done** — `FORMATION` in `tasks.h`: 5-mode slot geometry, Rz(yaw) rotation, blend, 3-part feedforward velocity, waypoint-cursor centroid. In-env cruise tracking 0.073 m |
-> | (d) observation extension | Not started — next |
-> | (f) Stage 3a benchmark / (g) 3b residual | Blocked on (d) |
+> | (d) observation extension | **Done** — 23 → 41 floats (RPMs still last). Neighbours are real at `num_drones=4`, zeros at 1; `u_classic` wired in per §2.5 |
+> | (e) reward extension | **Done** — velocity now measured vs the target (identity for static-target tasks); jerk, 2 s-alignment and separation terms added, all inert by default. Alpha re-tune deferred to the 3b sweep |
+> | (f) Stage 3a classical benchmark | **Done** — `bash stirling/tests/run_stage3a_bench.sh`. Floor at n=4, box-only, 2.2 m/s: score 935.88, perf 0.9324, ema_dist 0.0578, tracking 0.066 m, 0 oob / 0 breaches |
+> | (g) Stage 3b residual | Next — `--env.task 2 --env.num-drones 4 --env.control-mode 1 --env.k-res <k>`. **Judge on `ema_dist`, not `perf`** (see progress_log) |
 >
 > Two deviations from this doc worth knowing:
 >

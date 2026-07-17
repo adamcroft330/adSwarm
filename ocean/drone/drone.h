@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "dronelib.h"
@@ -42,6 +43,19 @@ struct DroneEnv {
     float alpha_shaping;
     float alpha_omega;
 
+    // Stage 3 task (e) reward extension. All default to 0 / disabled, so the
+    // Stage 1 HOVER reward is bit-for-bit unchanged unless a run opts in.
+    float alpha_jerk;  // penalty on velocity-setpoint deltas [per (m/s)]
+    float alpha_align; // penalty per second spent unaligned beyond align_time
+    float align_dist;  // "on slot" tolerance [m]
+    float align_time;  // grace before the unaligned penalty starts [s] (NFR-36: 2.0)
+    // Inter-drone separation floor [m]. 0 disables the check entirely — which
+    // is what HOVER wants: it packs 64 independent drones into one env with
+    // unrelated targets, so they routinely pass close and a breach there means
+    // nothing. FORMATION sets 0.4 (FR-15).
+    float separation_floor;
+    int separation_terminates; // 1: a breach ends the episode; 0: count only
+
     // hover task parameters
     float hover_target_dist;
     float hover_dist;
@@ -57,6 +71,16 @@ struct DroneEnv {
     // Formation task (tasks.h): shared virtual centroid + slot geometry.
     // Advanced once per tick in c_step; unused by the other tasks.
     Formation formation;
+    // 0 (default): pin the mode to box — what the competition brief requires,
+    // since deviations are legal only to avoid an obstacle and the env has no
+    // obstacles until Stage 4. 1: run the timer-driven scheduler, which is a
+    // validation fixture only. See config/drone.ini and tasks.h.
+    int formation_modes;
+    // Centroid cruise speed [m/s]. This is a real performance choice, not a
+    // constant: the competition scores course time as heavily as formation
+    // accuracy (6 pts each), and the classical controller has no speed policy
+    // at all — it flies at whatever this says. Swept in progress_log.md.
+    float formation_speed;
 };
 
 void init(DroneEnv* env) {
@@ -72,7 +96,7 @@ void init(DroneEnv* env) {
     env->tick = 0;
 }
 
-void add_log(DroneEnv* env, int idx, bool oob, bool timeout) {
+void add_log(DroneEnv* env, int idx, bool oob, bool timeout, bool breach) {
     Drone* agent = &env->agents[idx];
 
     env->log.episode_return += agent->episode_return;
@@ -81,6 +105,7 @@ void add_log(DroneEnv* env, int idx, bool oob, bool timeout) {
 
     if (oob) env->log.oob += 1.0f;
     if (timeout) env->log.timeout += 1.0f;
+    if (breach) env->log.sep_breach += 1.0f;
 
     env->log.score += agent->hover_score;
     env->log.perf += agent->hover_ema;
@@ -99,8 +124,14 @@ void add_log(DroneEnv* env, int idx, bool oob, bool timeout) {
 }
 
 void compute_observations(DroneEnv* env) {
+    // Formation context is shared by every agent in the env; -1 tells the
+    // builder this is not the FORMATION task (mode one-hot / timer read zero).
+    int mode = (env->task == FORMATION) ? (int)env->formation.mode : -1;
+    float ttm = (env->task == FORMATION) ? formation_time_to_mode_change(&env->formation) : 0.0f;
+
     for (int i = 0; i < env->num_agents; i++) {
-        compute_drone_observations(&env->agents[i], env->observations + i*23);
+        compute_drone_observations(&env->agents[i], env->agents, env->num_agents, i, mode, ttm,
+                                   env->observations + i * DRONE_OBS_SIZE);
     }
 }
 
@@ -124,6 +155,12 @@ void reset_agent(DroneEnv* env, Drone* agent, int idx) {
     agent->state.pos =
         (Vec3){rndf(-MARGIN_X, MARGIN_X, &env->rng), rndf(-MARGIN_Y, MARGIN_Y, &env->rng), rndf(-MARGIN_Z, MARGIN_Z, &env->rng)};
 
+    if (env->task == FORMATION) {
+        // Overrides the random grid spawn above: a FORMATION drone must start
+        // at its slot, which is wherever the centroid currently is.
+        formation_spawn_state(&env->formation, idx, &env->rng, &agent->state.pos, &agent->state.vel);
+    }
+
     if (env->task == RACE) {
         while (norm3(sub3(agent->state.pos, env->ring_buffer[0].pos)) < 2.0f * RING_RADIUS) {
             agent->state.pos = (Vec3){rndf(-MARGIN_X, MARGIN_X, &env->rng), rndf(-MARGIN_Y, MARGIN_Y, &env->rng),
@@ -140,7 +177,22 @@ void c_reset(DroneEnv* env) {
         reset_rings(&env->rng, env->ring_buffer, env->max_rings);
     }
     if (env->task == FORMATION) {
-        formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+        // The swarm is 4 drones (tech doc §2) and an env holds exactly one
+        // formation, so num_agents > FM_N_SLOTS would alias several drones
+        // onto the same slot — coincident targets that the APF then fights.
+        // Throughput does not need packing here: vecenv spawns envs until
+        // total_agents is reached, so num_drones=4 gives 4x more envs at the
+        // same agent count. Fail loudly rather than train on a broken task.
+        if (env->num_agents > FM_N_SLOTS) {
+            fprintf(stderr,
+                    "drone: task=formation requires num_drones <= %d (the swarm size), got %d.\n"
+                    "       Each env holds one formation; extra drones would share slots.\n"
+                    "       Set num_drones=4 in config — total_agents still sets throughput.\n",
+                    FM_N_SLOTS, env->num_agents);
+            exit(1);
+        }
+        formation_reset(&env->formation, &env->rng, env->formation_speed);
+        if (!env->formation_modes) env->formation.next_mode_t = FM_NO_SCHEDULE;
     }
 
     for (int i = 0; i < env->num_agents; i++) {
@@ -189,27 +241,59 @@ void c_step(DroneEnv* env) {
         float curr_dist = norm3(sub3(agent->target->pos, agent->state.pos));
         float omega = norm3(agent->state.omega);
 
+        // Inter-drone separation (FR-15). Skipped entirely at floor 0, which
+        // keeps HOVER's cost and behaviour untouched — it is O(n^2), and its
+        // 64 independent drones breach constantly and meaninglessly.
+        bool breach = false;
+        if (env->separation_floor > 0.0f) {
+            for (int j = 0; j < env->num_agents; j++) {
+                if (j == i) continue;
+                if (norm3(sub3(agent->state.pos, env->agents[j].state.pos)) < env->separation_floor) {
+                    breach = true;
+                    break;
+                }
+            }
+            if (breach) agent->collisions += 1.0f;
+        }
+
+        // NFR-36's 2 s rule as a graduated penalty: nothing while aligned or
+        // inside the grace window, then linear in the overrun.
+        if (curr_dist <= env->align_dist) agent->t_unaligned = 0.0f;
+        else agent->t_unaligned += ACTION_DT;
+        float unaligned = fmaxf(0.0f, agent->t_unaligned - env->align_time);
+
+        // Jerk on the commanded setpoint. Identically zero on the motor path,
+        // where v_cmd is never written.
+        float jerk = norm3(sub3(agent->v_cmd, agent->prev_v_cmd));
+
         float reward = env->alpha_dist * (prev_dist - curr_dist)
                      + env->alpha_hover * curr
                      + env->alpha_shaping * (curr - agent->prev_potential)
-                     - env->alpha_omega * omega;
-        
+                     - env->alpha_omega * omega
+                     - env->alpha_jerk * jerk
+                     - env->alpha_align * unaligned;
+
         agent->prev_potential = curr;
 
         float h = check_hover(agent, env->hover_dist, env->hover_omega, env->hover_vel);
         agent->hover_score += h;
         agent->hover_ema = (1.0f - 0.02f) * agent->hover_ema + 0.02f * h;
         agent->ema_dist = 0.99f * agent->ema_dist + 0.01f * curr_dist;
-        agent->ema_vel = 0.99f * agent->ema_vel + 0.01f * norm3(agent->state.vel);
+        // Relative to the target, for the same reason the reward is (task e):
+        // absolute velocity on FORMATION just reports the centroid's cruise
+        // speed (~1 m/s) and says nothing about how well the slot is held.
+        // Identity for static-target tasks, where target->vel is zero.
+        agent->ema_vel = 0.99f * agent->ema_vel
+                       + 0.01f * norm3(sub3(agent->state.vel, agent->target->vel));
         agent->ema_omega = 0.99f * agent->ema_omega + 0.01f * omega;
         agent->episode_return += reward;
         env->rewards[i] = reward;
 
-        bool reset = oob || timeout;
+        bool reset = oob || timeout || (breach && env->separation_terminates);
         env->terminals[i] = reset ? 1.0f : 0.0f;
 
         if (reset) {
-            add_log(env, i, oob, timeout);
+            add_log(env, i, oob, timeout, breach);
             reset_agent(env, agent, i);
             set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist, &env->formation);
         }

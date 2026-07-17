@@ -109,7 +109,33 @@ dying at ~100 steps.
   function), so `puffer eval drone --slowly` works on a Mac with no GPU.
 - **Experiments are args, not rebuilds.** Reward weights, task, timesteps,
   agent count, etc. are `puffer` CLI overrides passed through `--extra`, so
-  they never trigger a recompile.
+  they never trigger a recompile. Note the flags are generated from the keys
+  in `config/drone.ini` — a key that is not in the file has no flag and
+  cannot be overridden.
+
+## Running the FORMATION task
+
+`config/drone.ini` defaults to HOVER on the native motor path. FORMATION and
+the velocity-setpoint stack are reached by override:
+
+```
+# Stage 3a classical floor: pure classical control, no residual
+modal run stirling/modal/train_drone.py --tag stage3a-floor \
+    --extra "--env.task 2 --env.num-drones 4 --env.control-mode 1"
+
+# Stage 3b: residual enabled
+modal run stirling/modal/train_drone.py --tag stage3b-residual \
+    --extra "--env.task 2 --env.num-drones 4 --env.control-mode 1 --env.k-res 1.0"
+```
+
+- `--env.task 2` is FORMATION (1 is HOVER, the default).
+- `--env.num-drones 4` is **required**: the swarm is 4 and one env holds one
+  formation, so a larger value aliases drones onto shared slots. `c_reset`
+  errors out rather than train on it. This costs no throughput — `vec` spawns
+  envs until `total_agents` is reached, so 4 drones/env just means more envs.
+- `--env.control-mode 1` selects the velocity stack; `0` (default) is the
+  native motor path.
+- `--env.k-res` scales the RL residual; `0` is pure classical.
 
 ## Volumes created
 
