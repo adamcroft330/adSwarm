@@ -39,6 +39,7 @@ static DroneEnv* make_env(int n, int control_mode, float k_res) {
     env->align_time = 2.0f;
     env->separation_floor = 0.0f;
     env->separation_terminates = 0;
+    env->formation_modes = 0; // binding.c default: box-only, per the brief
     env->control_mode = control_mode;
     env->k_res = k_res;
     env->rng = 42;
@@ -364,6 +365,93 @@ static int test_formation_geometry(void) {
     return ok && tightest > VC_D_ACT;
 }
 
+// Test 7b: blend safety, and why box is HOME.
+//
+// A linear blend interpolates each slot offset independently, so the pairwise
+// separation *during* a transition can dip below both endpoints' separations.
+// It does: line <-> diamond reaches 0.330 m against the 0.40 m floor, from
+// endpoints of 1.000 m and 1.221 m. Every box <-> deviation blend stays
+// >= 0.636 m. That is precisely why the scheduler routes every transition
+// through box (and why the MuJoCo reference's schedule does).
+//
+// Asserts both halves: box-routed blends are safe, and at least one
+// deviation->deviation blend is not — so if someone "optimises" the scheduler
+// to skip box, this fails and says why.
+static int test_formation_blend_safety(void) {
+    float worst_via_box = 1e9f, worst_direct = 1e9f;
+    for (int m1 = 0; m1 < FORM_MODE_N; m1++) {
+        for (int m2 = 0; m2 < FORM_MODE_N; m2++) {
+            if (m1 == m2) continue;
+            float mn = 1e9f;
+            for (int k = 0; k <= 500; k++) {
+                float a = k / 500.0f;
+                for (int i = 0; i < FM_N_SLOTS; i++) {
+                    for (int j = i + 1; j < FM_N_SLOTS; j++) {
+                        Vec3 pi = add3(scalmul3(formation_slot_offset((FormationMode)m1, i), 1 - a),
+                                       scalmul3(formation_slot_offset((FormationMode)m2, i), a));
+                        Vec3 pj = add3(scalmul3(formation_slot_offset((FormationMode)m1, j), 1 - a),
+                                       scalmul3(formation_slot_offset((FormationMode)m2, j), a));
+                        float d = norm3(sub3(pi, pj));
+                        if (d < mn) mn = d;
+                    }
+                }
+            }
+            int via_box = (m1 == FORM_BOX || m2 == FORM_BOX);
+            if (via_box) { if (mn < worst_via_box) worst_via_box = mn; }
+            else { if (mn < worst_direct) worst_direct = mn; }
+        }
+    }
+    int safe = worst_via_box >= VC_D_FLOOR;
+    // The reason box-routing is mandatory: skipping it is genuinely unsafe.
+    int direct_unsafe = worst_direct < VC_D_FLOOR;
+    int ok = safe && direct_unsafe;
+    printf("[blend safety]  via box: worst mid-blend separation %.3f m (gate >=%.2f)  |  "
+           "direct dev->dev: %.3f m %s  -> %s\n",
+           worst_via_box, (double)VC_D_FLOOR, worst_direct,
+           direct_unsafe ? "(unsafe, hence box-routing)" : "(UNEXPECTEDLY SAFE)",
+           ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Test 7c: the scheduler only ever transitions box <-> deviation, never
+// deviation -> deviation, and it actually fires. Enforces the invariant test 7b
+// shows is load-bearing.
+static int test_formation_mode_scheduler(void) {
+    Formation f;
+    unsigned int rng = 99;
+    formation_reset(&f, &rng, 1.0f);
+
+    int transitions = 0, illegal = 0, seen[FORM_MODE_N] = {0};
+    FormationMode prev = f.mode;
+    for (int t = 0; t < 20000; t++) { // 200 s
+        formation_step(&f, &rng, ACTION_DT);
+        if (f.mode != prev) {
+            transitions++;
+            // Exactly one side of every transition must be box.
+            if (prev != FORM_BOX && f.mode != FORM_BOX) illegal++;
+            seen[f.mode]++;
+            prev = f.mode;
+        }
+    }
+    // Every deviation should get visited over 200 s.
+    int all_modes = 1;
+    for (int m = FORM_LINE; m < FORM_MODE_N; m++) if (!seen[m]) all_modes = 0;
+
+    // And box-only must genuinely pin the mode.
+    Formation pinned;
+    unsigned int rng2 = 7;
+    formation_reset(&pinned, &rng2, 1.0f);
+    pinned.next_mode_t = FM_NO_SCHEDULE;
+    for (int t = 0; t < 20000; t++) formation_step(&pinned, &rng2, ACTION_DT);
+    int pin_ok = (pinned.mode == FORM_BOX);
+
+    int ok = (transitions > 20) && (illegal == 0) && all_modes && pin_ok;
+    printf("[mode sched]    %d transitions in 200 s, dev->dev violations=%d, all deviations "
+           "visited=%d, box-only pins=%d  -> %s\n",
+           transitions, illegal, all_modes, pin_ok, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 // Test 8: mode-transition blend, checked analytically against the reference
 // (formation_manager.py): offsets interpolate linearly over FM_BLEND_TIME,
 // v_target carries the blend rate while 0<alpha<1, and both vanish once the
@@ -417,6 +505,12 @@ static int test_formation_feedforward_consistency(void) {
     Formation f;
     unsigned int rng = 123;
     formation_reset(&f, &rng, 1.0f);
+    // Drive transitions by hand, on known ticks, so this measures the
+    // feedforward invariant rather than racing the scheduler (which has its
+    // own gate). An external set_mode landing on a scheduler-started blend
+    // would discard it and step the target — real, but not what this tests,
+    // and unreachable in the env since dwell > blend.
+    f.next_mode_t = FM_NO_SCHEDULE;
 
     Vec3 prev_p[FM_N_SLOTS];
     Vec3 v_unused;
@@ -529,11 +623,131 @@ static int test_formation_episode_lifecycle(void) {
     int no_oob = (env->log.oob == 0.0f);
     int timed_out = (env->log.timeout > 0.0f);
     int ok = spawn_ok && no_oob && timed_out;
-    printf("[formation life] worst spawn offset=%.2f m (gate <=%.1f)  oob=%.0f (gate 0)  "
+    printf("[formation life] worst spawn offset=%.2f m (gate <=%.2f)  oob=%.0f (gate 0)  "
            "timeouts=%.0f  -> %s\n",
            worst_spawn, (double)FM_SPAWN_DIST, env->log.oob, env->log.timeout,
            ok ? "PASS" : "FAIL");
     free(env);
+    return ok;
+}
+
+// Test 10b: an episode must not START in breach of the separation floor.
+//
+// FM_SPAWN_DIST is bounded by geometry: adjacent box slots are FM_BOX_SIDE
+// apart, so two drones offsetting toward each other close to
+// FM_BOX_SIDE - 2*FM_SPAWN_DIST. At the first value tried (1.0 m) that was
+// negative — drones could spawn on top of each other, 1% of spawn pairs began
+// below the floor, and the Stage 3a benchmark reported a 0.077 m "min
+// separation" that was the spawn, not the controller. Sweeps the real random
+// distribution rather than just checking the bound.
+static int test_formation_spawn_separation(void) {
+    float min_sep = 1e9f;
+    int breaches = 0, pairs = 0;
+    for (int e = 0; e < 2000; e++) {
+        DroneEnv* env = make_env(4, CONTROL_MODE_VELOCITY, 0.0f);
+        env->task = FORMATION;
+        env->rng = (unsigned int)e;
+        c_reset(env);
+        for (int i = 0; i < 4; i++) {
+            for (int j = i + 1; j < 4; j++) {
+                float d = norm3(sub3(env->agents[i].state.pos, env->agents[j].state.pos));
+                if (d < min_sep) min_sep = d;
+                if (d < VC_D_FLOOR) breaches++;
+                pairs++;
+            }
+        }
+        free(env);
+    }
+    float bound = FM_BOX_SIDE - 2.0f * FM_SPAWN_DIST; // worst case, by geometry
+    int ok = (breaches == 0) && (min_sep >= VC_D_FLOOR) && (bound >= VC_D_FLOOR);
+    printf("[formation spawn] min separation at spawn=%.3f m over %d pairs, breaches=%d "
+           "(geometric worst case %.2f, floor %.2f)  -> %s\n",
+           min_sep, pairs, breaches, bound, (double)VC_D_FLOOR, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Settle time for max slot error to fall under THRESH and hold, from `now`.
+// Returns -1 if it never settles within `ticks`. Also reports min separation.
+static float drive_until_reformed(DroneEnv* env, int ticks, float* min_sep_out) {
+    const float THRESH = 0.15f, HOLD = 0.5f;
+    const int hold_n = (int)(HOLD / (double)ACTION_DT);
+    int run = 0, reform_tick = -1;
+    float min_sep = 1e9f;
+    for (int t = 0; t < ticks; t++) {
+        c_step(env);
+        float max_err = 0.0f;
+        for (int i = 0; i < env->num_agents; i++) {
+            float e = norm3(sub3(env->agents[i].target->pos, env->agents[i].state.pos));
+            if (e > max_err) max_err = e;
+            for (int j = i + 1; j < env->num_agents; j++) {
+                float d = norm3(sub3(env->agents[i].state.pos, env->agents[j].state.pos));
+                if (d < min_sep) min_sep = d;
+            }
+        }
+        run = (max_err < THRESH) ? run + 1 : 0;
+        if (reform_tick < 0 && run >= hold_n) reform_tick = t - hold_n + 1;
+    }
+    if (min_sep_out) *min_sep_out = min_sep;
+    return reform_tick < 0 ? -1.0f : reform_tick * (float)ACTION_DT;
+}
+
+// Test 10c: NFR-36 across mode transitions.
+//
+// The requirement is about getting HOME: "Box is home; transient deviations
+// permitted for obstacle avoidance; must reform within 2 seconds", and the
+// reward spec is explicit that the window is for "re-achieving box formation
+// offsets ... after any mode change or perturbation". So the 2 s gate belongs
+// on deviation -> box. Our other NFR-36 test covers the "or perturbation" half
+// (kick while in box); this covers the mode-change half.
+//
+// The outbound leg (box -> deviation) is measured and printed but only
+// required to settle at all — which is exactly what the MuJoCo reference asks
+// of it (`all(np.isfinite(v) for v in mode_transition_settle_s.values())`).
+static int test_formation_box_reform(void) {
+    int ok = 1;
+    float worst_home = 0.0f, worst_sep = 1e9f;
+
+    for (int m = FORM_LINE; m < FORM_MODE_N; m++) {
+        DroneEnv* env = make_env(4, CONTROL_MODE_VELOCITY, 0.0f);
+        env->task = FORMATION;
+        env->formation_modes = 0;        // pin the mode; this test drives it
+        env->hover_target_dist = 100.0f; // never oob during the manoeuvre
+        c_reset(env);
+        for (int i = 0; i < 4; i++) { // start settled on the box slots
+            env->agents[i].state.pos = env->agents[i].target->pos;
+            env->agents[i].state.vel = env->agents[i].target->vel;
+            env->agents[i].state.omega = (Vec3){0, 0, 0};
+            env->agents[i].state.quat = (Quat){1, 0, 0, 0};
+            env->agents[i].integ = (Vec3){0, 0, 0};
+        }
+        for (int t = 0; t < 300; t++) c_step(env); // RPM transient
+
+        // Outbound: characterisation only.
+        float sep_out = 0.0f;
+        formation_set_mode(&env->formation, (FormationMode)m);
+        float t_out = drive_until_reformed(env, 500, &sep_out);
+
+        // Homebound: this is the requirement.
+        float sep_home = 0.0f;
+        formation_set_mode(&env->formation, FORM_BOX);
+        float t_home = drive_until_reformed(env, 500, &sep_home);
+
+        float sep = fminf(sep_out, sep_home);
+        int this_ok = (t_out >= 0.0f)                        // outbound must settle
+                   && (t_home >= 0.0f) && (t_home < 2.0f)    // NFR-36: home in 2 s
+                   && (sep >= VC_D_FLOOR);
+        if (!this_ok) ok = 0;
+        if (t_home > worst_home) worst_home = t_home;
+        if (sep < worst_sep) worst_sep = sep;
+        printf("                 box->%-11s %.2f s (settles) | %-11s->box %.2f s (gate <2.0)"
+               "  min_sep=%.3f  %s\n",
+               FORMATION_MODE_NAMES[m], t_out, FORMATION_MODE_NAMES[m], t_home, sep,
+               this_ok ? "ok" : "FAIL");
+        free(env);
+    }
+    printf("[box reform]    worst reform-to-box=%.2f s (gate <2.0, NFR-36)  worst min_sep=%.3f m "
+           "(gate >=%.2f)  -> %s\n",
+           worst_home, worst_sep, (double)VC_D_FLOOR, ok ? "PASS" : "FAIL");
     return ok;
 }
 
@@ -794,10 +1008,14 @@ int main(int argc, char** argv) {
     printf("--- task (c): FORMATION task ---\n");
     pass &= test_task_enum_names();
     pass &= test_formation_geometry();
+    pass &= test_formation_blend_safety();
+    pass &= test_formation_mode_scheduler();
     pass &= test_formation_blend();
     pass &= test_formation_feedforward_consistency();
     pass &= test_formation_task_in_env();
     pass &= test_formation_episode_lifecycle();
+    pass &= test_formation_spawn_separation();
+    pass &= test_formation_box_reform();
 
     printf("--- task (d): extended observation vector ---\n");
     pass &= test_obs_layout();

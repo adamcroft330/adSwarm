@@ -22,7 +22,29 @@ Color COLORS[64] = {W, B, B, R, R, B, B, W, B, W, B, R, R, B, W, B, B, B, W, R, 
 #undef B
 
 // 3D model config
+//
+// A drone is drawn with arm 0.15 * model_scale, so MODEL_SCALE_DEFAULT gives a
+// 1.5 m span — about 19x the sim's Crazyflie airframe (BASE_ARM_LEN 0.0396 m,
+// a 0.079 m span). That exaggeration is what makes drones visible when HOVER
+// scatters them across a 60 m world, and it is harmless there.
+//
+// At formation scale it inverts into a lie: against a 1.2 m box the drawn
+// airframes *overlap by 0.3 m* and read as a near-collision, when the real
+// airframes have 1.12 m of clear air between them (~14 body spans) and the
+// measured min separation is 0.625 m against a 0.40 m floor.
+//
+// So FORMATION draws at the span its geometry is actually sized for — the
+// 250-class target platform (default_params.py QuadParams.arm = 0.125 m, i.e.
+// a 0.25 m span, per NFR-17): 0.15 * s = 0.125 -> s = 0.8333. A 1.2 m box then
+// shows a 0.95 m gap, ~3.8 spans, which is what that formation really looks
+// like on the target airframe.
+//
+// This does not make the picture fully honest, and cannot: the sim's *physics*
+// is still a Crazyflie while the formation geometry and the 0.40 m floor are
+// 250-class. That mismatch is the Stage 2 recalibration debt (see
+// velocity_controller.h), not a rendering problem.
 #define MODEL_SCALE_DEFAULT 5.0f
+#define MODEL_SCALE_FORMATION 0.8333f
 #define MODEL_SCALE_NORMAL 1.0f
 #define NUM_PROPELLERS 4
 static const int PROP_MESH_IDX[NUM_PROPELLERS] = {8, 6, 5, 7};
@@ -213,6 +235,13 @@ static Vec3 compute_mesh_center(Mesh* mesh) {
     return scalmul3(center, 1.0f / mesh->vertexCount);
 }
 
+// Full-detail drone scale for a task. FORMATION draws at its target platform's
+// span; everything else keeps upstream's deliberate exaggeration. See the
+// MODEL_SCALE_* block above.
+static inline float default_model_scale(DroneTask task) {
+    return (task == FORMATION) ? MODEL_SCALE_FORMATION : MODEL_SCALE_DEFAULT;
+}
+
 Client* make_client(DroneEnv* env) {
     Client* client = (Client*)calloc(1, sizeof(Client));
 
@@ -261,7 +290,7 @@ Client* make_client(DroneEnv* env) {
     client->follow_mode = false;
     client->target_fps = 100;
     client->model_loaded = false;
-    client->model_scale = MODEL_SCALE_DEFAULT;
+    client->model_scale = default_model_scale(env->task);
     client->render_mode = 0;
 
     // Load 3D model
@@ -428,15 +457,35 @@ void c_render(DroneEnv* env) {
     if (IsKeyPressed(KEY_SPACE)) {
         env->task = (DroneTask)((env->task + 1) % TASK_N);
 
+        // One env holds one formation, so FORMATION only works at or below the
+        // swarm size; above it several drones alias onto the same slot. c_reset
+        // rejects that config outright, but cycling tasks live must not kill a
+        // running window — just skip past it.
+        if (env->task == FORMATION && env->num_agents > FM_N_SLOTS) {
+            env->task = (DroneTask)((env->task + 1) % TASK_N);
+        }
+
         if (env->task == RACE) {
             reset_rings(&env->rng, env->ring_buffer, env->max_rings);
         }
         if (env->task == FORMATION) {
             formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+            // Slots are wherever the centroid is; without this the drones keep
+            // their old positions and are instantly oob (see progress_log).
+            for (int i = 0; i < env->num_agents; i++) {
+                formation_spawn_state(&env->formation, i, &env->rng, &env->agents[i].state.pos,
+                                      &env->agents[i].state.vel);
+            }
         }
 
         for (int i = 0; i < env->num_agents; i++) {
             set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist, &env->formation);
+        }
+
+        // Drone scale is task-dependent, so follow the task change (unless the
+        // user has picked a non-default render mode via Z).
+        if (env->client != NULL && env->client->render_mode == 0) {
+            env->client->model_scale = default_model_scale(env->task);
         }
     }
 
@@ -479,7 +528,7 @@ void c_render(DroneEnv* env) {
     if (IsKeyPressed(KEY_Z)) {
         client->render_mode = (client->render_mode + 1) % 3;
         if (client->render_mode == 0) {
-            client->model_scale = MODEL_SCALE_DEFAULT;
+            client->model_scale = default_model_scale(env->task);
         } else if (client->render_mode == 1) {
             client->model_scale = MODEL_SCALE_NORMAL;
         }

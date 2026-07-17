@@ -43,6 +43,8 @@ void my_init(Env* env, Dict* kwargs) {
     env->separation_floor = separation_floor ? (float)separation_floor->value : 0.0f;
     DictItem* separation_terminates = dict_get_unsafe(kwargs, "separation_terminates");
     env->separation_terminates = separation_terminates ? (int)separation_terminates->value : 0;
+    DictItem* formation_modes = dict_get_unsafe(kwargs, "formation_modes");
+    env->formation_modes = formation_modes ? (int)formation_modes->value : 0;
     init(env);
 }
 

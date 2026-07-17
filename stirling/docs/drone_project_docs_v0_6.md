@@ -87,8 +87,30 @@ The box/square formation is the COMPETITION DEFAULT and the formation that must 
 | Square / Box | Default 4-drone square (home) | Open course, standard transit | HOME — default at all times |
 | Line (single-file) | 4 drones along heading | Narrow corridors, tunnels | TRANSIENT deviation |
 | Stack (vertical) | 4 drones in vertical column | Horizontal bars, low gates | TRANSIENT deviation |
-| Compressed square | Smaller square (scaled offsets) | Marginal-width gates, partial occlusions | TRANSIENT deviation |
+| Compressed square | Smaller square (scaled offsets) | Marginal-width gates, partial occlusions | **BOX RESIZE — see note** |
 | Diamond | Lead-trail with side wings | Asymmetric obstacles | TRANSIENT deviation |
+
+> **Correction (2026-07-17), from the official competition brief**
+> (`2026 Tomorrow Trials - Competition Brief.pdf`, "Swarm & Formation Rules").
+> The brief permits the box to be resized at will — *"The dimensions of the
+> 'box' can be set by the team, and can change in size as required to best meet
+> the course, but a box structure should try to be maintained throughout"* — so
+> **compressed square is a permitted box resize, not a deviation**. It carries
+> no 2 s clock and no formation-accuracy cost. Line, stack and diamond are not
+> boxes and remain TRANSIENT deviations, permitted *"only when avoiding
+> obstacles"* and re-established within 2 s. Encoded as
+> `formation_mode_is_box()` in `ocean/drone/tasks.h`.
+>
+> Two further points from the brief worth carrying into Stage 4:
+> - Deviations are **obstacle-gated**. There is no legal timer-driven
+>   deviation; on an open course a deviation is a rules violation and a scored
+>   loss (6 pts "consistently tight and stable" vs 3 "frequent deviations").
+> - **"3D box formation" is ambiguous for 4 drones** and unresolved. Four
+>   drones cannot occupy a cuboid's 8 vertices; the implemented slots are a
+>   *planar* square (all z = 0), which is the only sensible 4-drone box — but
+>   the brief says *3D*. **Worth clarifying with the organisers**: it changes
+>   the slot geometry, and therefore NFR-36, the separation envelope, and the
+>   whole formation manager.
 
 ## 4.3 Slot Offsets
 

@@ -67,14 +67,36 @@ DroneTask get_task(char* task_name) {
 
 #define FM_N_SLOTS 4
 
+// Order matches formation_manager.py's MODES tuple; do not reorder.
+//
+// The competition brief splits these into two classes, which the tech doc's
+// mode table does not (it calls compressed a "TRANSIENT deviation"):
+//
+//   BOX FAMILY (box, compressed) — always legal. The brief: "The dimensions of
+//   the 'box' can be set by the team, and can change in size as required to
+//   best meet the course, but a box structure should try to be maintained."
+//   A compressed square is a box at a smaller size, i.e. a permitted resize,
+//   not a deviation.
+//
+//   DEVIATIONS (line, stack, diamond) — not boxes. Legal "only when avoiding
+//   obstacles", and "the formation must be re-established within 2 seconds".
+//   Each one also costs formation-accuracy points, so they are a last resort
+//   for clearing an obstacle, never a routine manoeuvre.
 typedef enum {
     FORM_BOX, // home / competition default
     FORM_LINE,
     FORM_STACK,
-    FORM_COMPRESSED,
+    FORM_COMPRESSED, // a box resize, NOT a deviation — see above
     FORM_DIAMOND,
     FORM_MODE_N // Should always be last
 } FormationMode;
+
+// True for the modes that still satisfy "maintain a box formation": box and
+// compressed differ only in scale. Stage 4's obstacle logic and any formation-
+// accuracy scoring should gate on this rather than on `mode == FORM_BOX`.
+static inline bool formation_mode_is_box(FormationMode mode) {
+    return mode == FORM_BOX || mode == FORM_COMPRESSED;
+}
 
 static char const* FORMATION_MODE_NAMES[FORM_MODE_N] = {"box", "line", "stack", "compressed",
                                                         "diamond"};
@@ -119,6 +141,29 @@ FormationMode get_formation_mode(char* mode_name) {
 #define FM_BLEND_TIME 1.0f // linear mode-transition blend [s]
 #endif
 
+// Mode scheduler dwell range [s]. VALIDATION FIXTURE ONLY — see
+// formation_next_mode. The MuJoCo reference holds each mode for 3 s; this
+// randomises so a fixture cannot be gamed by a learned clock. The floor must
+// clear the 1 s blend plus the ~1.3 s reform with margin.
+//
+// Note these dwells exceed the brief's 2 s reform window, deliberately: the
+// fixture holds each mode long enough to measure its settle, which a *legal*
+// obstacle deviation would never do. Another reason not to train on it.
+#ifndef FM_MODE_DWELL_MIN
+#define FM_MODE_DWELL_MIN 3.0f
+#endif
+#ifndef FM_MODE_DWELL_MAX
+#define FM_MODE_DWELL_MAX 6.0f
+#endif
+// The dwell must exceed the blend, or the scheduler could retarget a
+// transition that is still running. formation_set_mode discards a partial
+// blend (prev_mode := mode, as the Python reference does), so interrupting one
+// makes the target position jump from the blended offset to the destination's
+// — a step the tracker would chase. Keeping dwell > blend makes that
+// unreachable rather than merely unlikely.
+_Static_assert(FM_MODE_DWELL_MIN > FM_BLEND_TIME,
+               "mode dwell must exceed blend time, or a blend can be interrupted mid-flight");
+
 // Centroid path planner (Stage 3: a rule-based waypoint cursor).
 #ifndef FM_CRUISE_SPEED
 #define FM_CRUISE_SPEED 1.0f // centroid cruise speed [m/s]
@@ -135,8 +180,16 @@ FormationMode get_formation_mode(char* mode_name) {
 #ifndef FM_YAW_RATE_MAX
 #define FM_YAW_RATE_MAX 0.5f // centroid turn-rate limit [rad/s]
 #endif
+// Episode-start offset from the assigned slot [m]. Bounded by geometry, not
+// taste: adjacent box slots are FM_BOX_SIDE apart and each drone offsets by up
+// to this much, so two of them close to FM_BOX_SIDE - 2*FM_SPAWN_DIST. That
+// must stay above the 0.40 m separation floor (VC_D_FLOOR, which this header
+// cannot reference — velocity_controller.h includes it, not the reverse), or
+// episodes begin already in breach and the APF spends the first tick digging
+// out of a violation it did not cause. At 0.35: 1.2 - 0.7 = 0.5 m of margin.
+// Asserted over the random distribution by the [formation spawn] gate.
 #ifndef FM_SPAWN_DIST
-#define FM_SPAWN_DIST 1.0f // episode-start offset from the assigned slot [m]
+#define FM_SPAWN_DIST 0.35f
 #endif
 
 // Waypoint inset from the world extent. Covers the largest slot offset (line,
@@ -243,6 +296,31 @@ void formation_set_mode(Formation* f, FormationMode mode) {
     f->blend_t0 = f->t;
 }
 
+// Pick the next scheduled mode, for the timer-driven VALIDATION FIXTURE
+// (env->formation_modes = 1). This is not the mission profile and must not be
+// trained on: the competition brief permits a deviation "only when avoiding
+// obstacles", so on an open course a timer-driven deviation is both a rules
+// violation and a scored loss ("consistently tight and stable" 6 pts vs
+// "frequent deviations" 3). The real trigger is an obstacle, which arrives
+// with the Stage 4 primitives; this fixture exists to exercise the blend the
+// way demo_formation.py's mode sweep does.
+//
+// Box is HOME and every deviation returns to it before the next one (tech doc
+// §4.2), mirroring the reference's schedule: box -> line -> box -> stack -> ...
+//
+// That alternation is a SAFETY property, not a stylistic one. A linear blend
+// between two formations can pass *inside* the separation floor even when both
+// endpoints are legal, because the slot offsets interpolate independently:
+// line -> diamond dips to 0.330 m against the 0.40 m floor, from endpoints of
+// 1.000 m and 1.221 m. Every box <-> deviation blend stays >= 0.636 m. Routing
+// through box is therefore what keeps transitions inside FR-15, and the
+// [formation blend safety] gate asserts both halves of that claim.
+static inline FormationMode formation_next_mode(const Formation* f, unsigned int* rng) {
+    if (f->mode != FORM_BOX) return FORM_BOX;
+    // Uniform over the deviations, FORM_LINE..FORM_DIAMOND.
+    return (FormationMode)(FORM_LINE + (int)(rand_r(rng) % (FORM_MODE_N - 1)));
+}
+
 // World-frame target position and velocity for one slot.
 //
 // v_target carries the centroid velocity, the blend rate, and the yaw-rate
@@ -299,7 +377,9 @@ void formation_reset(Formation* f, unsigned int* rng, float speed) {
     f->mode = FORM_BOX;
     f->prev_mode = FORM_BOX;
     f->blend_t0 = FM_NO_BLEND;
-    f->next_mode_t = FM_NO_SCHEDULE;
+    // Schedule the first deviation. c_reset overrides this to FM_NO_SCHEDULE
+    // when formation_modes = 0 (box-only).
+    f->next_mode_t = rndf(FM_MODE_DWELL_MIN, FM_MODE_DWELL_MAX, rng);
     f->speed = (speed > 0.0f) ? speed : FM_CRUISE_SPEED;
     f->centroid.pos = (Vec3){rndf(-FM_MARGIN_X, FM_MARGIN_X, rng), rndf(-FM_MARGIN_Y, FM_MARGIN_Y, rng),
                              rndf(-FM_MARGIN_Z, FM_MARGIN_Z, rng)};
@@ -317,6 +397,13 @@ void formation_reset(Formation* f, unsigned int* rng, float speed) {
 // applied this tick, which is what keeps the slot feedforward exact.
 void formation_step(Formation* f, unsigned int* rng, float dt) {
     f->t += dt;
+
+    // Mode scheduler. next_mode_t == FM_NO_SCHEDULE pins the mode (box-only),
+    // which is what env->formation_modes = 0 selects.
+    if (f->t >= f->next_mode_t) {
+        formation_set_mode(f, formation_next_mode(f, rng));
+        f->next_mode_t = f->t + rndf(FM_MODE_DWELL_MIN, FM_MODE_DWELL_MAX, rng);
+    }
 
     Vec3 to_wp = sub3(f->waypoint, f->centroid.pos);
     if (norm3(to_wp) < FM_WP_TOL) {

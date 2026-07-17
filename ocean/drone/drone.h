@@ -71,6 +71,11 @@ struct DroneEnv {
     // Formation task (tasks.h): shared virtual centroid + slot geometry.
     // Advanced once per tick in c_step; unused by the other tasks.
     Formation formation;
+    // 0 (default): pin the mode to box — what the competition brief requires,
+    // since deviations are legal only to avoid an obstacle and the env has no
+    // obstacles until Stage 4. 1: run the timer-driven scheduler, which is a
+    // validation fixture only. See config/drone.ini and tasks.h.
+    int formation_modes;
 };
 
 void init(DroneEnv* env) {
@@ -182,6 +187,7 @@ void c_reset(DroneEnv* env) {
             exit(1);
         }
         formation_reset(&env->formation, &env->rng, FM_CRUISE_SPEED);
+        if (!env->formation_modes) env->formation.next_mode_t = FM_NO_SCHEDULE;
     }
 
     for (int i = 0; i < env->num_agents; i++) {
@@ -268,7 +274,12 @@ void c_step(DroneEnv* env) {
         agent->hover_score += h;
         agent->hover_ema = (1.0f - 0.02f) * agent->hover_ema + 0.02f * h;
         agent->ema_dist = 0.99f * agent->ema_dist + 0.01f * curr_dist;
-        agent->ema_vel = 0.99f * agent->ema_vel + 0.01f * norm3(agent->state.vel);
+        // Relative to the target, for the same reason the reward is (task e):
+        // absolute velocity on FORMATION just reports the centroid's cruise
+        // speed (~1 m/s) and says nothing about how well the slot is held.
+        // Identity for static-target tasks, where target->vel is zero.
+        agent->ema_vel = 0.99f * agent->ema_vel
+                       + 0.01f * norm3(sub3(agent->state.vel, agent->target->vel));
         agent->ema_omega = 0.99f * agent->ema_omega + 0.01f * omega;
         agent->episode_return += reward;
         env->rewards[i] = reward;

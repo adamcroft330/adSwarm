@@ -7,6 +7,177 @@ this records what actually landed.
 
 ---
 
+## 2026-07-17 — Stage 3a classical floor recorded (task f); `perf` cannot judge 3b
+
+`bash stirling/tests/run_stage3a_bench.sh` — headless, ~10 s, no policy and no
+GPU (`k_res = 0` makes actions irrelevant, so there is nothing to infer). Per
+the plan: "no RL training in this run — it's a sim validation pass".
+
+### The floor
+
+Pure classical control on FORMATION, 256 envs × 4 horizons = 4096 episodes:
+
+| Metric | **SWARM (n=4)** | SOLO (n=1) |
+| --- | ---: | ---: |
+| episodes | 4096 | 1024 |
+| score | **970.19** | 967.14 |
+| perf | **0.9716** | 0.9713 |
+| episode_return | **55.55** | 54.58 |
+| episode_length | 1024.0 (full) | 1024.0 (full) |
+| ema_dist | **0.0217** | 0.0224 |
+| ema_vel | **0.0246** | 0.0240 |
+| oob | **0** | 0 |
+| collisions / sep_breach | **0 / 0** | 0 / 0 |
+| mean tracking error | **0.0359 m** | 0.0381 m |
+| worst tracking error | 0.6514 m | 0.6842 m |
+| min separation | **0.6045 m** | — |
+
+> Re-measured 2026-07-17 after the mode scheduler landed. The controller is
+> unchanged; `formation_reset` now draws one extra RNG value, shifting the
+> seeded sequence. Every metric moved <0.5% (score 973.95 → 970.19) — sampling
+> noise across 4096 episodes. Box-only, per the competition brief.
+
+**Compare 3b against the SWARM row.** The plan specified `num_agents = 1` with
+stubbed neighbours; the swarm is 4 (tech doc §2), neighbours are real at 4, and
+3b trains at 4 — so the floor must be measured at 4 or it is a different task.
+SOLO is kept as the no-APF, no-neighbour reference; the two barely differ,
+which says the APF is not doing meaningful work in steady box flight.
+
+**NFR-37 in practice:** 0 breaches over 4096 episodes, min separation 0.625 m
+against a 0.40 m floor. That does not upgrade NFR-37 from PARTIAL — the APF
+still has no hard guarantee above ~1.75 m/s head-on closing — but the box
+scenario stays well inside the envelope, as claimed.
+
+### Fixed first: the spawn started episodes in breach
+
+The initial run reported min separation **0.077 m** with 37 breach episodes.
+That was not the controller: `FM_SPAWN_DIST` was set to 1.0 m by taste, against
+a 1.2 m box side, so two adjacent drones could close to 1.2 − 2×1.0 = **−0.8 m**
+— they could spawn on top of each other, and **1% of spawn pairs began below the
+0.40 m floor**. Episodes started in a state violating the safety requirement,
+and the APF spent the first ticks digging out of a violation it did not cause.
+
+`FM_SPAWN_DIST` is now **0.35 m**, bounded by geometry rather than taste:
+`FM_BOX_SIDE − 2*FM_SPAWN_DIST ≥ 0.40` gives 0.5 m of guaranteed margin. A new
+`[formation spawn]` gate sweeps the real random distribution over 2000 resets
+(12000 pairs) — min 0.563 m, 0 breaches. Effect on the floor: min separation
+0.077 → 0.625 m, collisions 2365 → 0, mean tracking error 0.074 → 0.034 m.
+
+### `perf` and `score` cannot judge 3b — use `ema_dist`
+
+The classical controller sits at **97.9% of `perf`'s ceiling**, so there is 2.1%
+of headroom for the residual to compete for. That is a property of the metric,
+not of the controller: `check_hover`'s distance term is scaled by
+`hover_dist * 10` = **1.0 m**, tuned for HOVER acquiring a target up to 5 m
+away — but formation tracking errors are **0.034 m**, so the term contributes
+0.7 × 0.034 = 0.024 and the metric barely moves. A residual that *halved*
+tracking error would move `perf` from 0.979 to ~0.985 — inside run-to-run noise.
+
+`ema_dist` (0.0188) and mean tracking error (0.0340 m) are discriminative: the
+same halving shows up as a clean 2× change. **Judge 3b on those.** Tightening
+`--env.hover-dist` for FORMATION runs would also re-scale `perf`, but changes
+the reward as well, so it belongs in the 3b sweep rather than being set here by
+assertion.
+
+`ema_vel` is now measured against the target too, for the same reason the reward
+is: it previously reported 1.0034 — the centroid's cruise speed, which says
+nothing about how well the slot is held. It now reads 0.0173, the actual
+slot-holding error rate. Identity for static-target tasks.
+
+---
+
+## 2026-07-17 — Competition brief read; mode scheduler is a fixture, not the task; Stage 3a floor recorded
+
+The official **2026 Tomorrow Trials Competition Brief** (`stirling/docs/`) is now
+in the repo. Reading it settled an open design question and corrected a mistake.
+
+### What the brief actually requires
+
+> - Drones must maintain a 3D box formation throughout the course.
+> - The dimensions of the 'box' can be set by the team, and can change in size
+>   as required to best meet the course, but a box structure should try to be
+>   maintained throughout.
+> - Temporary deviations from the formation are allowed **only when avoiding
+>   obstacles**, but the formation must be re-established within 2 seconds.
+
+Three consequences:
+
+1. **Deviations are obstacle-gated, not routine.** A timer-driven deviation on
+   an open course is a rules violation *and* a scored loss — the scoring table
+   pays 6 pts for "formation consistently tight and stable" against 3 for
+   "frequent deviations, recovery usually adequate".
+2. **`compressed` is not a deviation — it is a permitted box resize.** The tech
+   doc's mode table (§4.2) classes it "TRANSIENT deviation"; the brief
+   explicitly allows changing the box's size. **The tech doc should be
+   corrected.** The modes split into a *box family* (box, compressed — always
+   legal) and *deviations* (line, stack, diamond — obstacle-only, ≤2 s, each
+   costing formation points). Encoded as `formation_mode_is_box()`.
+3. **The 2 s window is for re-establishing the box**, confirming the reading
+   already applied to the reform gate: the clock runs on deviation → box, not
+   on box → deviation.
+
+### The mode scheduler: added, then correctly demoted
+
+A timer-driven `box <-> deviation` scheduler was added on the strength of
+`demo_formation.py`'s 8-transition schedule. That was a mistake of category:
+**the demo is a validation fixture that sweeps all five modes to prove the
+manager works — it is not the mission profile.** Its 3–6 s dwells even exceed
+the brief's own 2 s reform window, which a legal obstacle deviation never
+would.
+
+So `formation_modes` now defaults to **0 (box-only)**, which is what the brief
+requires and what the original Stage 3 scoping said ("modes are
+obstacle-traversal deviations; obstacles are Stage 4"). The scheduler is kept
+behind the flag as a validation fixture and the Stage 4 obstacle-trigger seam.
+The mode one-hot and time-to-change observations are consequently constant in
+Stage 3 — honest, since nothing may legally trigger a deviation yet.
+
+### Kept from the exercise — two findings worth the detour
+
+- **`line <-> diamond` blends are unsafe.** A linear blend interpolates each
+  slot offset independently, so separation *during* a transition can dip below
+  both endpoints: line→diamond reaches **0.330 m** against the 0.40 m floor,
+  from endpoints of 1.000 m and 1.221 m. Every `box <-> deviation` blend stays
+  ≥ 0.636 m. **Routing every transition through box is therefore a safety
+  property, not doctrine** — and it is what the reference's schedule does.
+  Gated by `[blend safety]`, which also asserts the direct route *is* unsafe,
+  so a future "optimisation" that skips box fails loudly.
+- **A blend must never be interrupted.** `formation_set_mode` discards a
+  partial blend (as the Python reference does), so retargeting mid-transition
+  steps the target position. A `_Static_assert` pins
+  `FM_MODE_DWELL_MIN > FM_BLEND_TIME`, making it unreachable rather than
+  unlikely.
+
+### NFR-36 across mode transitions — new gate
+
+`[box reform]` reforms box from each deviation, measured as the reference does
+(max slot error < 0.15 m held 0.5 s). All pass, but the margin is thin:
+
+| Transition | box → mode | **mode → box** (the requirement) | min sep |
+| --- | ---: | ---: | ---: |
+| line | 0.56 s | 0.54 s | 0.765 m |
+| stack | 1.70 s | **1.65 s** | 0.601 m |
+| compressed | 0.00 s | 0.00 s | 0.632 m |
+| diamond | 0.37 s | 0.35 s | 0.934 m |
+
+**stack → box has only 0.35 s of margin on the 2 s rule** — the tightest number
+in the project. Stack is the largest geometric change (a horizontal square to a
+vertical column, ±1.125 m in z). If the platform slips or the residual adds
+overhead, this is what breaks first. Compressed settles instantly, as expected
+for a resize the tracker follows inside its threshold.
+
+### Stage 3a floor re-measured
+
+The floor recorded in the task (f) entry below has been **superseded** — see
+that entry, whose table now carries the current numbers. Nothing about the
+controller changed; `formation_reset` now draws one extra RNG value (the first
+`next_mode_t`), which shifts the whole seeded sequence and therefore the
+waypoints and spawns. The floor moved by <0.5% on every metric (score
+973.95 → 970.19, ema_dist 0.0188 → 0.0217), which is sampling noise across
+4096 episodes, not a regression.
+
+---
+
 ## 2026-07-17 — Reward extension (task e): velocity measured against the target
 
 Closes the blocker flagged in the entry below. Stage 3 (a)–(e) are done; (f) is
