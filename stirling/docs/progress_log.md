@@ -7,6 +7,88 @@ this records what actually landed.
 
 ---
 
+## 2026-07-17 — Reward extension (task e): velocity measured against the target
+
+Closes the blocker flagged in the entry below. Stage 3 (a)–(e) are done; (f) is
+unblocked.
+
+### The fix that mattered: relative velocity
+
+`hover_potential` and `check_hover` scored "on target and settled" using
+**absolute** velocity, which is only correct for a static target. A FORMATION
+drone must cruise with its centroid, so the metric penalised it for performing
+the task — and since `reward` contains `alpha_hover * potential`, a residual
+would have been rewarded for slowing down, i.e. for leaving formation. Both now
+use `|v - v_target|`.
+
+**This is exact identity for every static-target task.** HOVER, ORBIT, CUBE and
+FLAG all set `target->vel = 0`, so `|v - v_target| == |v|` — asserted directly
+by a gate rather than argued. Only IDLE/FOLLOW/CONGO shift; they carry the
+upstream per-tick `target->vel` convention and are untrained demo tasks. `omega`
+is deliberately left absolute: the cascade drives yaw rate to zero (yaw is
+damping-only), so drones do not rotate with the formation — the slot geometry
+rotates around them.
+
+Effect on the FORMATION potential, pure classical: **0.66**, against HOVER's
+0.65 — the two tasks are now scored on comparable footing.
+
+### New terms, all inert by default
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `alpha_jerk` | 0.0 | penalty on `\|v_cmd - prev_v_cmd\|`; identically zero on the motor path, where `v_cmd` is never written |
+| `alpha_align` | 0.0 | penalty per second unaligned beyond `align_time` — NFR-36's 2 s rule as a graduated penalty |
+| `align_dist` | 0.15 | "on slot" tolerance (matches the NFR-36 test threshold) |
+| `align_time` | 2.0 | grace window |
+| `separation_floor` | 0.0 | inter-drone floor (FR-15); **0 skips the O(n²) check entirely** |
+| `separation_terminates` | 0 | whether a breach ends the episode |
+
+`separation_floor = 0` is what HOVER wants: it packs 64 independent drones with
+unrelated targets into one env, so they routinely pass close and a breach there
+is meaningless — and skipping the check keeps its cost off the Stage 1 path.
+
+The default HOVER reward is **bit-identical** to Stage 1: a gate reconstructs
+the pre-(e) formula and measures `max |reward - upstream| = 0.00e+00`.
+
+`Log.collisions` was declared, reset and logged upstream but **never
+incremented** — every training log so far reported a structural zero. It is now
+wired to the separation check, alongside a new `sep_breach` count.
+
+### Alpha re-tune: deferred to the 3b sweep, deliberately
+
+The plan asks to re-evaluate the four alphas against FORMATION. Measured
+per-tick contributions, pure classical:
+
+| Term | FORMATION | HOVER |
+| --- | ---: | ---: |
+| `alpha_hover * potential` | **+0.047** | +0.046 |
+| `alpha_dist * d(dist)` | −0.0013 | +0.0018 |
+| `alpha_shaping * d(potential)` | +0.00006 | +0.00044 |
+| `alpha_omega * \|omega\|` | 0.00025 | 0.00023 |
+
+`alpha_hover * potential` dominates steady state by ~30×; the convergence terms
+telescope to ~0 once on-slot, but still drive the 1 m spawn transient, so they
+are not dead weight. With the potential now task-correct, the alphas are not
+*wrong* for FORMATION — they are untuned, and tuning them is a sweep, not an
+analytical exercise. `config/drone.ini` already has `[sweep.env.alpha_*]`
+sections for exactly this.
+
+`alpha_jerk`/`alpha_align` are left at 0 rather than guessed: both are latent
+under pure classical control (jerk `|dv_cmd|` = 0.0048 m/s; tracking error
+0.07 m never leaves `align_dist`, so the timer never runs), so no defensible
+size exists until the residual is in the loop.
+
+### Deferred, with reasons
+
+- **Reform-within-2s bonus window** (plan: "200-step exponential bonus after a
+  mode-change event") — there are no mode-change events in Stage 3; the
+  scheduler is Stage 4, and no disturbance event exists in the env either (the
+  NFR-36 test injects its kick by hand). The same 2 s rule is live now as the
+  `alpha_align` penalty, so the requirement is represented.
+- **Obstacle-contact termination** — no obstacle primitives until Stage 4.
+
+---
+
 ## 2026-07-17 — FORMATION spawn fix; (f) is blocked on (e), with the cost measured
 
 Found while setting up (f), the Stage 3a classical benchmark. Two problems, one
@@ -36,6 +118,8 @@ episode begins in formation rather than accelerating into it.
 **Why the tests missed it:** the in-env test placed drones on-slot by hand and
 ran 800 ticks — under `HORIZON` (1024), so no reset ever fired. A new gate
 (`[formation life]`) runs ~4 horizons and asserts spawn offset plus **oob = 0**.
+
+### Resolved by the task (e) entry above — original finding retained below
 
 ### Flagged: the reward/metric is HOVER-shaped, and (e) is not done
 

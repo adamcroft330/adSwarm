@@ -68,7 +68,11 @@ struct Log {
     float episode_return;
     float episode_length;
     float rings_passed;
+    // Ticks spent inside separation_floor of another drone. Upstream declared
+    // and logged this but never incremented it — task (e) wires it to the
+    // inter-drone separation check (FR-15).
     float collisions;
+    float sep_breach; // episodes ended by a separation breach
     float oob;
     float ring_collision;
     float timeout;
@@ -153,6 +157,16 @@ typedef struct {
     // residual is correcting (RL pipeline §2.5). Stays zero on the native
     // motor path, where no classical law runs.
     Vec3 u_classic;
+
+    // Final commanded velocity setpoint (post-residual, post-APF) and its
+    // previous value, for the jerk penalty (task e). Both stay zero on the
+    // native motor path, so the jerk term is identically zero there.
+    Vec3 v_cmd;
+    Vec3 prev_v_cmd;
+
+    // Seconds the drone has been outside align_dist of its target, for the
+    // NFR-36 2 s rule (task e). Reset to 0 whenever it is aligned.
+    float t_unaligned;
 
     // target buffer
     Target* buffer;
@@ -323,6 +337,9 @@ static inline void init_drone(Drone* drone, unsigned int* rng, float dr) {
     drone->state.quat = (Quat){1.0f, 0.0f, 0.0f, 0.0f};
     drone->integ = (Vec3){0.0f, 0.0f, 0.0f};
     drone->u_classic = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->v_cmd = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->prev_v_cmd = (Vec3){0.0f, 0.0f, 0.0f};
+    drone->t_unaligned = 0.0f;
 }
 
 static inline void compute_derivatives(State* state, Params* params, float* actions,
@@ -553,9 +570,26 @@ static inline bool check_collision(Drone* agent, Drone* others, int num_agents) 
     return nearest_dist < 0.1f;
 }
 
+// Velocity is measured *relative to the target* (Stage 3 task e).
+//
+// These two functions score "is the drone on its target and settled". The
+// upstream form used absolute velocity, which is correct only when the target
+// is static. A FORMATION drone must cruise with its centroid at ~1 m/s, so
+// absolute velocity penalised it for performing the task — measured at 15.2%
+// of score, and worse, `reward` contains alpha_hover*potential, so a residual
+// would be rewarded for slowing down, i.e. for leaving the formation.
+//
+// This is exactly identity for every task with a static target: HOVER, ORBIT,
+// CUBE and FLAG all set target->vel = 0. IDLE/FOLLOW/CONGO carry the upstream
+// per-tick target->vel convention (see tasks.h) and shift slightly; they are
+// untrained demo tasks.
+//
+// omega is deliberately left absolute: the velocity cascade drives yaw rate to
+// zero (yaw is damping-only), so drones do not rotate with the formation — the
+// slot geometry rotates around them.
 float hover_potential(Drone* agent, float hover_dist, float hover_omega, float hover_vel) {
     float dist = norm3(sub3(agent->target->pos, agent->state.pos));
-    float vel = norm3(agent->state.vel);
+    float vel = norm3(sub3(agent->state.vel, agent->target->vel));
     float omega = norm3(agent->state.omega);
 
     float d = 1.0f / (1.0f + dist / hover_dist);
@@ -565,9 +599,10 @@ float hover_potential(Drone* agent, float hover_dist, float hover_omega, float h
     return d * (0.7f + 0.15f * v + 0.15f * w);
 }
 
+// Velocity relative to the target — see hover_potential above.
 float check_hover(Drone* agent, float hover_dist, float hover_omega, float hover_vel) {
     float dist = norm3(sub3(agent->target->pos, agent->state.pos));
-    float vel = norm3(agent->state.vel);
+    float vel = norm3(sub3(agent->state.vel, agent->target->vel));
     float omega = norm3(agent->state.omega);
 
     float d = dist / (hover_dist * 10.0f);

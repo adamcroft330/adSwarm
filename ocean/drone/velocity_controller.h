@@ -282,5 +282,7 @@ static inline void velocity_control_step(int idx, Drone* agents, int num_agents,
     }
 
     Vec3 v_cmd = safety_filter(u_total, idx, agents, num_agents);
+    agent->prev_v_cmd = agent->v_cmd; // jerk penalty reads the delta (task e)
+    agent->v_cmd = v_cmd;
     velocity_to_motor_actions(agent, v_cmd, motor_actions);
 }

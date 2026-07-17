@@ -32,6 +32,13 @@ static DroneEnv* make_env(int n, int control_mode, float k_res) {
     env->hover_dist = 0.1f;
     env->hover_omega = 0.1f;
     env->hover_vel = 0.1f;
+    // Task (e): mirror binding.c's defaults. Every weight inert.
+    env->alpha_jerk = 0.0f;
+    env->alpha_align = 0.0f;
+    env->align_dist = 0.15f;
+    env->align_time = 2.0f;
+    env->separation_floor = 0.0f;
+    env->separation_terminates = 0;
     env->control_mode = control_mode;
     env->k_res = k_res;
     env->rng = 42;
@@ -643,6 +650,129 @@ static int test_obs_layout(void) {
     return ok;
 }
 
+// --- Task (e) tests: the reward extension -----------------------------------
+
+// Test 12: the relative-velocity change is exact identity for static-target
+// tasks. hover_potential/check_hover now measure |v - v_target| instead of
+// |v|, which is the whole point on FORMATION — but it must not perturb the
+// Stage 1 HOVER reward. It cannot, provided target->vel is zero there, so
+// assert that directly for every static-target task rather than reasoning
+// about it. (IDLE/FOLLOW/CONGO are excluded: they carry the upstream per-tick
+// target->vel convention and are untrained demo tasks.)
+static int test_static_target_tasks_unaffected(void) {
+    const int tasks[] = {HOVER, ORBIT, CUBE, FLAG};
+    const char* names[] = {"hover", "orbit", "cube", "flag"};
+    int ok = 1;
+    for (int t = 0; t < 4; t++) {
+        DroneEnv* env = make_env(8, CONTROL_MODE_MOTOR, 0.0f);
+        env->task = tasks[t];
+        c_reset(env);
+        for (int i = 0; i < env->num_agents; i++) {
+            Vec3 tv = env->agents[i].target->vel;
+            if (tv.x != 0.0f || tv.y != 0.0f || tv.z != 0.0f) {
+                printf("[reward identity] %s agent %d has target->vel=(%.3f,%.3f,%.3f)  -> FAIL\n",
+                       names[t], i, tv.x, tv.y, tv.z);
+                ok = 0;
+            }
+        }
+        free(env);
+    }
+    printf("[reward identity] hover/orbit/cube/flag all have target->vel=0, so "
+           "|v - v_target| == |v|  -> %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// Test 13: the new reward terms are inert at their default weights, so a
+// config that does not opt in gets the Stage 1 reward exactly. Drives HOVER on
+// the native motor path and reconstructs the pre-task-(e) reward formula: any
+// divergence means a new term leaked into the default path.
+static int test_reward_extension_inert(void) {
+    DroneEnv* env = make_env(8, CONTROL_MODE_MOTOR, 0.0f);
+    float worst = 0.0f;
+    for (int t = 0; t < 400; t++) {
+        float pre_pot[8], pre_dist[8];
+        for (int i = 0; i < 8; i++) {
+            pre_pot[i] = env->agents[i].prev_potential;
+            pre_dist[i] = norm3(sub3(env->agents[i].target->pos, env->agents[i].state.pos));
+            (void)pre_dist[i];
+        }
+        c_step(env);
+        for (int i = 0; i < 8; i++) {
+            Drone* a = &env->agents[i];
+            if (a->episode_length == 0) continue; // just reset; prev_* are stale
+            float curr = hover_potential(a, env->hover_dist, env->hover_omega, env->hover_vel);
+            float prev_d = norm3(sub3(a->target->pos, a->prev_pos));
+            float curr_d = norm3(sub3(a->target->pos, a->state.pos));
+            // The upstream formula, with no task-(e) terms at all.
+            float want = env->alpha_dist * (prev_d - curr_d) + env->alpha_hover * curr
+                       + env->alpha_shaping * (curr - pre_pot[i])
+                       - env->alpha_omega * norm3(a->state.omega);
+            float d = fabsf(want - env->rewards[i]);
+            if (d > worst) worst = d;
+        }
+    }
+    int ok = worst < 1e-5f;
+    printf("[reward inert]    max |reward - upstream formula| on HOVER/motor = %.2e  -> %s\n",
+           worst, ok ? "PASS" : "FAIL");
+    free(env);
+    return ok;
+}
+
+// Test 14: the opt-in terms actually fire. Separation: two drones pinned
+// inside the floor must count a collision and (when enabled) terminate.
+// Alignment: a drone pinned off-slot past align_time must accrue the penalty,
+// and must not before the grace window elapses.
+static int test_reward_extension_fires(void) {
+    // --- separation breach
+    DroneEnv* env = make_env(2, CONTROL_MODE_MOTOR, 0.0f);
+    env->separation_floor = 0.4f;
+    env->separation_terminates = 1;
+    env->agents[0].state.pos = (Vec3){0, 0, 0};
+    env->agents[1].state.pos = (Vec3){0.2f, 0, 0}; // 0.2 m < 0.4 m floor
+    env->agents[0].target->pos = (Vec3){0, 0, 0};
+    env->agents[1].target->pos = (Vec3){0.2f, 0, 0};
+    c_step(env);
+    int sep_ok = (env->terminals[0] == 1.0f) && (env->log.sep_breach >= 1.0f);
+    free(env);
+
+    // Same geometry, floor disabled -> no breach, no termination.
+    DroneEnv* off = make_env(2, CONTROL_MODE_MOTOR, 0.0f);
+    off->agents[0].state.pos = (Vec3){0, 0, 0};
+    off->agents[1].state.pos = (Vec3){0.2f, 0, 0};
+    off->agents[0].target->pos = (Vec3){0, 0, 0};
+    off->agents[1].target->pos = (Vec3){0.2f, 0, 0};
+    c_step(off);
+    int off_ok = (off->terminals[0] == 0.0f) && (off->log.sep_breach == 0.0f);
+    free(off);
+
+    // --- alignment timer: hold a drone 1 m off target (inside the 6 m oob
+    // margin) and check the penalty starts only after align_time.
+    DroneEnv* al = make_env(1, CONTROL_MODE_MOTOR, 0.0f);
+    al->alpha_align = 1.0f;
+    al->alpha_dist = 0.0f; al->alpha_hover = 0.0f; al->alpha_shaping = 0.0f; al->alpha_omega = 0.0f;
+    Drone* a = &al->agents[0];
+    float r_before = 0.0f, r_after = 0.0f;
+    for (int t = 0; t < 400; t++) {
+        a->state.pos = (Vec3){0, 0, 0};
+        a->target->pos = (Vec3){1.0f, 0, 0}; // 1 m off, well beyond align_dist
+        al->hover_target_dist = 100.0f;      // never oob
+        c_step(al);
+        if (t == 100) r_before = al->rewards[0]; // t=1.0 s, inside the 2 s grace
+        if (t == 350) r_after = al->rewards[0];  // t=3.5 s, ~1.5 s of overrun
+    }
+    // Inside the window: no penalty. Past it: penalty grows with the overrun.
+    int align_ok = (fabsf(r_before) < 1e-6f) && (r_after < -1.0f);
+    float t_un = a->t_unaligned;
+    free(al);
+
+    int ok = sep_ok && off_ok && align_ok;
+    printf("[reward fires]    separation: breach=%s disabled=%s | alignment: "
+           "r(1.0s)=%.3f r(3.5s)=%.3f t_unaligned=%.1fs  -> %s\n",
+           sep_ok ? "ok" : "BAD", off_ok ? "ok" : "BAD", r_before, r_after, t_un,
+           ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 int main(int argc, char** argv) {
     // Gate mode: `test_velocity_wrapper <k_mot>` runs only the NFR-36 formation
     // gate at the given motor time constant and returns its verdict as the exit
@@ -671,6 +801,11 @@ int main(int argc, char** argv) {
 
     printf("--- task (d): extended observation vector ---\n");
     pass &= test_obs_layout();
+
+    printf("--- task (e): reward extension ---\n");
+    pass &= test_static_target_tasks_unaffected();
+    pass &= test_reward_extension_inert();
+    pass &= test_reward_extension_fires();
 
     // Why the cascade is tuned the way it is. The control law is identical in
     // every row — only the platform's motor time constant moves. BASE_K_MOT was

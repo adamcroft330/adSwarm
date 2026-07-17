@@ -43,6 +43,19 @@ struct DroneEnv {
     float alpha_shaping;
     float alpha_omega;
 
+    // Stage 3 task (e) reward extension. All default to 0 / disabled, so the
+    // Stage 1 HOVER reward is bit-for-bit unchanged unless a run opts in.
+    float alpha_jerk;  // penalty on velocity-setpoint deltas [per (m/s)]
+    float alpha_align; // penalty per second spent unaligned beyond align_time
+    float align_dist;  // "on slot" tolerance [m]
+    float align_time;  // grace before the unaligned penalty starts [s] (NFR-36: 2.0)
+    // Inter-drone separation floor [m]. 0 disables the check entirely — which
+    // is what HOVER wants: it packs 64 independent drones into one env with
+    // unrelated targets, so they routinely pass close and a breach there means
+    // nothing. FORMATION sets 0.4 (FR-15).
+    float separation_floor;
+    int separation_terminates; // 1: a breach ends the episode; 0: count only
+
     // hover task parameters
     float hover_target_dist;
     float hover_dist;
@@ -73,7 +86,7 @@ void init(DroneEnv* env) {
     env->tick = 0;
 }
 
-void add_log(DroneEnv* env, int idx, bool oob, bool timeout) {
+void add_log(DroneEnv* env, int idx, bool oob, bool timeout, bool breach) {
     Drone* agent = &env->agents[idx];
 
     env->log.episode_return += agent->episode_return;
@@ -82,6 +95,7 @@ void add_log(DroneEnv* env, int idx, bool oob, bool timeout) {
 
     if (oob) env->log.oob += 1.0f;
     if (timeout) env->log.timeout += 1.0f;
+    if (breach) env->log.sep_breach += 1.0f;
 
     env->log.score += agent->hover_score;
     env->log.perf += agent->hover_ema;
@@ -216,11 +230,38 @@ void c_step(DroneEnv* env) {
         float curr_dist = norm3(sub3(agent->target->pos, agent->state.pos));
         float omega = norm3(agent->state.omega);
 
+        // Inter-drone separation (FR-15). Skipped entirely at floor 0, which
+        // keeps HOVER's cost and behaviour untouched — it is O(n^2), and its
+        // 64 independent drones breach constantly and meaninglessly.
+        bool breach = false;
+        if (env->separation_floor > 0.0f) {
+            for (int j = 0; j < env->num_agents; j++) {
+                if (j == i) continue;
+                if (norm3(sub3(agent->state.pos, env->agents[j].state.pos)) < env->separation_floor) {
+                    breach = true;
+                    break;
+                }
+            }
+            if (breach) agent->collisions += 1.0f;
+        }
+
+        // NFR-36's 2 s rule as a graduated penalty: nothing while aligned or
+        // inside the grace window, then linear in the overrun.
+        if (curr_dist <= env->align_dist) agent->t_unaligned = 0.0f;
+        else agent->t_unaligned += ACTION_DT;
+        float unaligned = fmaxf(0.0f, agent->t_unaligned - env->align_time);
+
+        // Jerk on the commanded setpoint. Identically zero on the motor path,
+        // where v_cmd is never written.
+        float jerk = norm3(sub3(agent->v_cmd, agent->prev_v_cmd));
+
         float reward = env->alpha_dist * (prev_dist - curr_dist)
                      + env->alpha_hover * curr
                      + env->alpha_shaping * (curr - agent->prev_potential)
-                     - env->alpha_omega * omega;
-        
+                     - env->alpha_omega * omega
+                     - env->alpha_jerk * jerk
+                     - env->alpha_align * unaligned;
+
         agent->prev_potential = curr;
 
         float h = check_hover(agent, env->hover_dist, env->hover_omega, env->hover_vel);
@@ -232,11 +273,11 @@ void c_step(DroneEnv* env) {
         agent->episode_return += reward;
         env->rewards[i] = reward;
 
-        bool reset = oob || timeout;
+        bool reset = oob || timeout || (breach && env->separation_terminates);
         env->terminals[i] = reset ? 1.0f : 0.0f;
 
         if (reset) {
-            add_log(env, i, oob, timeout);
+            add_log(env, i, oob, timeout, breach);
             reset_agent(env, agent, i);
             set_target(&env->rng, env->task, env->agents, i, env->num_agents, env->hover_target_dist, &env->formation);
         }
