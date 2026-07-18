@@ -48,7 +48,7 @@ Two checkpoint files land in `stirling/artifacts/drone/<tag>/`:
   on the GPU right after training). This is the one you eval on a Mac:
 
 ```bash
-source .venv-macos-eval/bin/activate
+# assumes the .venv is active (see stirling/docs/macos_eval.md)
 puffer eval drone --slowly --load-model-path stirling/artifacts/drone/<tag>/<step>.pt
 ```
 

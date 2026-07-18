@@ -21,8 +21,8 @@ shift
 if [ -z "${PYTHON:-}" ]; then
     if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
         PYTHON="$VIRTUAL_ENV/bin/python"
-    elif [ -x ".venv-macos-eval/bin/python" ]; then
-        PYTHON=".venv-macos-eval/bin/python"
+    elif [ -x ".venv/bin/python" ]; then
+        PYTHON=".venv/bin/python"
     elif command -v python3 >/dev/null 2>&1; then
         PYTHON="python3"
     else

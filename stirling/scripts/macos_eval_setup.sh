@@ -27,7 +27,7 @@ if [ -n "${VIRTUAL_ENV:-}" ]; then
     PYTHON="$BASE_PYTHON"
     echo "== using active venv: $VIRTUAL_ENV =="
 else
-    VENV_DIR="${VENV_DIR:-.venv-macos-eval}"
+    VENV_DIR="${VENV_DIR:-.venv}"
     if [ ! -x "$VENV_DIR/bin/python" ]; then
         "$BASE_PYTHON" -m venv "$VENV_DIR"
     fi

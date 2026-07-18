@@ -31,9 +31,9 @@ Run the setup script from the repo root:
 bash stirling/scripts/macos_eval_setup.sh
 ```
 
-The script installs missing Homebrew packages, creates `.venv-macos-eval` unless
-you already have an active virtualenv, installs the repo in editable mode,
-builds the CPU backend with the Homebrew `libomp` include and library paths, and
+The script installs missing Homebrew packages, creates a `.venv` virtualenv
+unless you already have one active, installs the repo in editable mode, builds
+the CPU backend with the Homebrew `libomp` include and library paths, and
 verifies:
 
 ```bash
@@ -46,12 +46,26 @@ Expected output includes:
 drone 0
 ```
 
-If the setup script created the venv, activate it before running direct `puffer`
-commands:
+### The venv convention
+
+The Python-side tools — `puffer` (torch eval) and `modal` (training) — live in a
+`.venv` created by the setup script. **Activate it once per shell and leave it
+active; the rest of this doc and `stirling/modal/README.md` assume it is:**
 
 ```bash
-source .venv-macos-eval/bin/activate
+source .venv/bin/activate
 ```
+
+The C dev loop needs none of this. The controller/formation test suite and the
+Stage 3a benchmark build with stock `clang` and no Python at all:
+
+```bash
+bash stirling/tests/run_velocity_tests.sh     # NFR-36 + formation gates, ~2 s
+bash stirling/tests/run_stage3a_bench.sh      # classical FORMATION floor
+```
+
+Reach for the venv only when you need to train (Modal) or eval a trained policy
+in torch.
 
 ## Stage 1 Checkpoint Eval
 

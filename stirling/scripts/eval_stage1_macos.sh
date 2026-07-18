@@ -27,8 +27,8 @@ fi
 
 if command -v puffer >/dev/null 2>&1; then
     PUFFER=(puffer)
-elif [ -x ".venv-macos-eval/bin/puffer" ]; then
-    PUFFER=(.venv-macos-eval/bin/puffer)
+elif [ -x ".venv/bin/puffer" ]; then
+    PUFFER=(.venv/bin/puffer)
 else
     echo "ERROR: puffer command not found."
     echo "Run: bash stirling/scripts/macos_eval_setup.sh"
