@@ -206,6 +206,109 @@ more than paid for the extra pace.
 
 ---
 
+## 2026-07-18 — Stage 3b residual measured (task g): 3.8× tracking, at a safety cost
+
+Stage 3 (a)–(g) are now complete. Four 40M-step Modal runs — `k_res` ∈ {0.25,
+0.5, 1.0} on the velocity stack, plus a motor-level ceiling — evaluated against
+the classical floor.
+
+### Results
+
+`python stirling/tests/eval_stage3b.py` — headless, deterministic (mean)
+actions, 2048 steps/config, FORMATION box-only at 2.2 m/s.
+
+| config | score | perf | **ema_dist** | ema_vel | ep_len | oob | proximity |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **classical floor** | **933.77** | 0.9360 | 0.0567 | 0.0539 | 1024.0 | **0** | **0** |
+| residual k=0.25 | 886.27 | 0.9457 | 0.0339 | 0.0494 | 1021.2 | 0.005 | 0.012 |
+| residual k=0.5 | 876.89 | 0.9308 | 0.0319 | 0.0652 | 1022.4 | 0.003 | 0.030 |
+| **residual k=1.0** | 910.59 | **0.9448** | **0.0148** | 0.0340 | 1023.7 | 0.002 | 0.014 |
+| motor ceiling | 885.08 | 0.9430 | 0.0199 | 0.0317 | 1022.8 | 0.002 | 0.125 |
+
+("proximity" = ticks within the 0.40 m separation floor — *not* contact; the
+airframe is 0.079 m across. Logged in the upstream `collisions` field.)
+
+### The residual works, and beats the ceiling
+
+`ema_dist` **0.0567 → 0.0148** at `k_res=1.0`, a **3.8× improvement** in slot
+tracking. It also beats **motor-level control** (0.0199).
+
+**That answers the RL pipeline §2.4 escalation question: no.** The
+velocity-setpoint architecture is not what limits performance here — the
+residual inside it outperforms unconstrained motor control on the metric the
+task is judged by. The `3a < 3b ≤ ceiling` ordering the escalation test assumed
+does not hold; 3b exceeds the ceiling, so there is no architecture cost to
+recover by escalating.
+
+`k_res = 1.0` being best also refutes the prediction that unit-variance
+exploration (`logstd = 0` at init ⇒ `dv ~ N(0,1)` ⇒ ±3 m/s commands) would
+destroy training. It trains fine and wins. The residual scale is a safety cap,
+not a learning-rate-like knob to keep small.
+
+### The cost: the floor's perfect safety record is lost
+
+The classical controller has **exactly zero** oob and zero proximity ticks over
+every episode. Every residual has nonzero both. Small in absolute terms
+(0.01–0.03 proximity ticks/episode) but it is a category change: a guarantee
+became a probability. The competition scores **−2 for any drone contact**, so
+this is a real trade, not a rounding error.
+
+The motor ceiling is **10× worse** on proximity (0.125) — good evidence *for*
+keeping the APF-constrained architecture rather than escalating.
+
+### NFR-37: the cheap fix is not available
+
+The plan was to decide here between **bounding `k_res`** (cheap) and **porting
+CBF-QP** (expensive). The data kills the cheap option: `k_res=1.0` has *fewer*
+proximity ticks (0.014) than `k_res=0.5` (0.030). Safety is not monotone in the
+residual scale, so bounding it does not buy a guarantee. **If a hard separation
+guarantee is required, CBF-QP is the only route.** NFR-37 stays PARTIAL.
+
+### Reading the table: `score` is the wrong column
+
+`score` is a *sum* of per-tick quality over the episode, so it conflates
+quality with survival — a worse controller that lives longer scores higher.
+The residuals lose a few ticks to oob and have a worse spawn transient, so
+`score` ranks them below the floor while `ema_dist` (3.8× better) and `perf`
+(0.9448 vs 0.9360) rank them above. `perf` is an EMA that has forgotten the
+transient; `score` has not. **Judge on `ema_dist` and `perf`, not `score`.**
+The residual is better once settled and worse through the spawn transient —
+a real characterisation, and a candidate for the reward re-weighting deferred
+in task (e).
+
+### Harness note: the native eval was measuring the wrong function
+
+The first eval was written in C against `puffernet.h` and produced garbage
+(75–100% oob) for policies that had trained cleanly to score ~888. The cause is
+a **real bug in `puffernet.h`**: `get_weights_aligned` rounds each tensor to an
+8-float boundary, but the exported checkpoint is densely packed. Every tensor
+before the 4-element `logstd` is a multiple of 8, so the corruption starts
+exactly there and shifts every MinGRU weight after it. Same weights, same
+observation: native gave `[-0.36, -0.05, -0.04, -0.17]`, torch gave
+`[-0.90, -0.51, -2.12, -0.48]`.
+
+**Consequence beyond this eval: the native renderer's policy path is silently
+wrong for any continuous-action checkpoint.** It has not been noticed because
+`drone.c` defaults to `k_res=0`, which discards policy output entirely. Left
+unfixed — it is shared upstream code and a fix cannot be validated against the
+other Ocean envs from here, whose checkpoints may genuinely be aligned.
+
+`stirling/tests/eval_stage3b.py` drives the same C env through the **torch**
+policy instead, which is ground truth by construction. Its floor row (`k_res=0`,
+policy loaded but discarded) reproduces `bench_stage3a.c` — 933.77 vs 935.88,
+`ema_dist` 0.0567 vs 0.0578 — which is the harness self-check: if that row ever
+drifts, distrust the harness before the controller.
+
+### What this does not measure
+
+The residual's expected real advantage is **variable speed** — a fixed cruise
+must stay reform-ready at all times, while a policy need only bank authority
+when a deviation is imminent. That cannot be exercised without an obstacle to
+trigger a deviation, so it waits for Stage 4. The `time-to-next-mode-change`
+observation exists for that signal and is constant today.
+
+---
+
 ## 2026-07-17 — Competition brief read; mode scheduler is a fixture, not the task; Stage 3a floor recorded
 
 The official **2026 Tomorrow Trials Competition Brief** (`stirling/docs/`) is now

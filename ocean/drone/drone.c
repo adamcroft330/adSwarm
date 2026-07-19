@@ -85,6 +85,18 @@ int main() {
     Weights* weights = NULL;
     PufferNet* net = NULL;
     if (policy_used) {
+        // WARNING: this path is known-broken for continuous-action policies.
+        // puffernet.h's get_weights_aligned rounds each tensor to an 8-float
+        // boundary, but the exported checkpoint is densely packed. Every tensor
+        // up to the 4-element logstd is a multiple of 8, so corruption starts
+        // there and shifts every MinGRU weight after it — the network computes
+        // a different function than the one that trained. Verified: same
+        // weights and observation gave native [-0.36,-0.05,-0.04,-0.17] vs
+        // torch [-0.90,-0.51,-2.12,-0.48].
+        //
+        // For real policy evaluation use the torch path, which is ground truth:
+        //   puffer eval drone --slowly --load-model-path <checkpoint>.pt
+        // See stirling/docs/progress_log.md (2026-07-18).
         weights = load_weights("resources/drone/drone_weights.bin");
         int logit_sizes[4] = {1, 1, 1, 1};
         // make_puffernet(weights, num_agents, obs_size, hidden_size, num_layers, logit_sizes, num_actions)

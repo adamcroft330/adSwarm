@@ -18,7 +18,12 @@ of the Stage 1 baseline.
 > | (d) observation extension | **Done** — 23 → 41 floats (RPMs still last). Neighbours are real at `num_drones=4`, zeros at 1; `u_classic` wired in per §2.5 |
 > | (e) reward extension | **Done** — velocity now measured vs the target (identity for static-target tasks); jerk, 2 s-alignment and separation terms added, all inert by default. Alpha re-tune deferred to the 3b sweep |
 > | (f) Stage 3a classical benchmark | **Done** — `bash stirling/tests/run_stage3a_bench.sh`. Floor at n=4, box-only, 2.2 m/s: score 935.88, perf 0.9324, ema_dist 0.0578, tracking 0.066 m, 0 oob / 0 breaches |
-> | (g) Stage 3b residual | Next — `--env.task 2 --env.num-drones 4 --env.control-mode 1 --env.k-res <k>`. **Judge on `ema_dist`, not `perf`** (see progress_log) |
+> | (g) Stage 3b residual | **Done** — `python stirling/tests/eval_stage3b.py`. Best at `k_res=1.0`: `ema_dist` 0.0567 → **0.0148** (3.8×), beating the motor-level ceiling (0.0199). Cost: the floor's zero-oob/zero-proximity record is lost. **Judge on `ema_dist`/`perf`, not `score`** |
+>
+> **Stage 3 is complete.** Two decisions it settled: RL pipeline §2.4 —
+> **do not escalate** to motor-level control (the residual beats the ceiling);
+> and NFR-37 — **bounding `k_res` does not buy safety** (it is not monotone in
+> the residual scale), so CBF-QP is the only route to a hard guarantee.
 >
 > Two deviations from this doc worth knowing:
 >
