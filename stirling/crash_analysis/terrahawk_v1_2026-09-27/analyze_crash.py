@@ -281,6 +281,100 @@ def summary(L, R):
           f'mean {R["ground_cur_mean"]:.2f} A; disarmed baseline {R["disarmed_baseline"]:.2f} A)')
 
 
+def precursors(L, R):
+    """How early did anything in the log show the mount failing? Onsets relative to the break."""
+    brk = R['shock1']
+    ref = (296.0, 307.5)  # Pitch P ramp before the final second: the same flight regime, rocking included
+    print('\nPrecursors (lead time before the break at %.2f s)' % brk)
+
+    # ArduPilot's own vibration metric (raw high-rate accel, >5 Hz) and the >15 Hz band of the logged IMU data
+    def sustained_onset(tt, x, thr):
+        above = x > thr
+        if not above[-1]:
+            return None
+        i = len(above) - 1
+        while i > 0 and above[i - 1]:
+            i -= 1
+        return tt[i]
+
+    v, tv = L.D['VIBE'], L.t('VIBE')
+    for imu in (0, 1):
+        out = []
+        for ax in ('VibeX', 'VibeY', 'VibeZ'):
+            mb = (tv >= ref[0]) & (tv < ref[1]) & (v['IMU'] == imu)
+            thr = v[ax][mb].mean() + 4 * v[ax][mb].std()
+            m = (tv >= ref[1]) & (tv < brk) & (v['IMU'] == imu)
+            on = sustained_onset(tv[m], v[ax][m], thr)
+            out.append(f'{ax[-1]} {brk - on:.2f} s' if on is not None else f'{ax[-1]} none')
+        print(f'  VIBE above baseline+4sd, IMU{imu}: ' + ', '.join(out))
+    b, a = signal.butter(4, 15, btype='high', fs=300)
+    im, ti = L.D['IMU'], L.t('IMU')
+    for imu in (0, 1):
+        m0 = im['I'] == imu
+        t = ti[m0]
+        edges = np.arange(ref[0], brk + 1e-9, 0.05)
+        idx = np.digitize(t, edges)
+        out = []
+        for ax in ('AccX', 'AccY', 'AccZ', 'GyrX', 'GyrY', 'GyrZ'):
+            x = signal.filtfilt(b, a, im[ax][m0])
+            rms = np.array([np.sqrt((x[idx == k] ** 2).mean()) for k in range(1, len(edges))])
+            cen = edges[:-1]
+            thr = np.percentile(rms[cen < ref[1]], 99.9)
+            late = (cen >= ref[1]) & (cen < brk - 0.05)
+            on = sustained_onset(cen[late], rms[late], thr)
+            out.append(f'{ax} {brk - on:.2f} s' if on is not None else f'{ax} none')
+        print(f'  >15 Hz band above baseline p99.9, IMU{imu}: ' + ', '.join(out))
+
+    # Thrust efficiency in running 0.5 s windows, mean of both EKF cores
+    x, tx, q, tq = L.D['XKF1'], L.t('XKF1'), L.D['QTUN'], L.t('QTUN')
+
+    def eff(a0, a1):
+        mq = (tq >= a0) & (tq < a1)
+        cmd = q['ThO'][mq].mean() / q['ThH'][mq].mean()
+        lift = np.mean([1 - np.polyfit(tx[(tx >= a0) & (tx < a1) & (x['C'] == c)],
+                                       x['VD'][(tx >= a0) & (tx < a1) & (x['C'] == c)], 1)[0] / G for c in (0, 1)])
+        return lift / cmd
+    steady = [eff(a0, a0 + 0.5) for a0 in np.arange(R['stages'][0]['t0'], R['stages'][-1]['t0'] - 0.5, 0.5)]
+    ramp = [(a0, eff(a0, a0 + 0.5)) for a0 in np.arange(ref[0], ref[1], 0.5)]
+    lo_t, lo = min(ramp, key=lambda r: r[1])
+    print(f'  thrust efficiency: steady tuning min {min(steady):.2f}; Pitch P ramp min {lo:.2f} at {lo_t:.1f} s (rocking)')
+    for a0 in np.arange(brk - 1.5, brk - 0.49, 0.25):
+        e = eff(a0, a0 + 0.5)
+        flag = '  <- below anything earlier' if e < lo else ''
+        print(f'    window ending {brk - (a0 + 0.5):.2f} s before break: {e:.2f}{flag}')
+
+    # Yaw opposing its demand: how often did that happen earlier without a failure?
+    r, tr = L.D['RATE'], L.t('RATE')
+    m = (tr >= R['stages'][0]['t0']) & (tr < ref[1])
+    opp = (np.sign(r['Y'][m]) != np.sign(r['YDes'][m])) & (np.abs(r['Y'][m]) > 10) & (np.abs(r['YDes'][m]) > 10)
+    t, runs, start = tr[m], [], None
+    for k, o in enumerate(opp):
+        if o and start is None:
+            start = k
+        elif not o and start is not None:
+            if t[k - 1] - t[start] > 0.3:
+                runs.append(t[start])
+            start = None
+    mf = (tr >= brk - 1.0) & (tr < brk)
+    print(f'  yaw rate >10 deg/s against a >10 deg/s demand for >0.3 s: {len(runs)} earlier episodes '
+          f'({", ".join(f"{x:.1f}" for x in runs)} s); max yaw rate earlier {np.abs(r["Y"][m]).max():.1f} deg/s '
+          f'vs {np.abs(r["Y"][mf]).max():.1f} in the final second')
+
+    # Structural / roll-loop mode frequency: a softening mount would pull it down
+    m0 = im['I'] == 0
+    freqs = []
+    for a0, a1 in ((R['arm2'] + 5, R['stages'][0]['t0']), (R['stages'][0]['t0'], ref[0]), ref):
+        mm = m0 & (ti >= a0) & (ti < a1)
+        g = np.degrees(im['GyrX'][mm]) - np.degrees(im['GyrX'][mm]).mean()
+        f, pxx = signal.welch(g, fs=300, nperseg=1024, nfft=8192)
+        s_ = (f >= 15) & (f <= 40)
+        freqs.append(f'{f[s_][np.argmax(pxx[s_])]:.1f} Hz ({a0:.0f}-{a1:.0f} s)')
+    print('  roll 15-40 Hz mode: ' + ', '.join(freqs))
+    o, to = L.D['RCOU'], L.t('RCOU')
+    mo = (to > brk - 1.0) & (to < brk)
+    print(f'  M4 highest command before the break: {o["C6"][mo].max()} us')
+
+
 # ----------------------------------------------------------------------------
 # Figures
 # ----------------------------------------------------------------------------
@@ -413,7 +507,7 @@ def fig_last_seconds(L, R, out):
     axs[0].set_title('a  Roll rate: ~1 Hz rocking from ~300 s (roll was not being tuned); off scale after failure',
                      fontsize=9.5)
     axs[1].set_title('b  Pitch rate: 5-6 Hz oscillation grows as Pitch P passes ~0.55', fontsize=9.5)
-    axs[2].set_title('c  Yaw rate: clockwise drift from 308.7 s despite full counter-yaw demand', fontsize=9.5)
+    axs[2].set_title('c  Yaw rate: clockwise drift from 308.7 s against the demand (similar excursions occurred earlier)', fontsize=9.5)
     ax = axs[3]
     motor_lines(ax, L, t0, t1, label_end=False)
     ax.axhline(L.P['Q_M_PWM_MIN'] + L.P['Q_M_SPIN_MAX'] * (L.P['Q_M_PWM_MAX'] - L.P['Q_M_PWM_MIN']),
@@ -422,7 +516,7 @@ def fig_last_seconds(L, R, out):
     ax.set_ylim(1100, 2010); ax.set_ylabel('Motor output\n(PWM us)')
     ax.legend(loc='lower left', ncol=4, fontsize=7.5, frameon=True, facecolor=SURF, edgecolor='none',
               framealpha=0.9)
-    ax.set_title('d  Motor outputs (25 Hz): M4 reaches ~1940 us just before the failure', fontsize=9.5)
+    ax.set_title('d  Motor outputs (25 Hz): M4 climbs to ~1920 us in the last half-second', fontsize=9.5)
     ax = axs[4]
     tq = L.t('QTUN'); mq = (tq >= t0) & (tq < t1)
     cmd = L.D['QTUN']['ThO'][mq] / L.D['QTUN']['ThH'][mq]
@@ -533,6 +627,7 @@ def main():
     L = Log(*load(args.log))
     R = analyse(L)
     summary(L, R)
+    precursors(L, R)
     os.makedirs(args.out, exist_ok=True)
     fig_overview(L, R, args.out)
     fig_last_seconds(L, R, args.out)

@@ -32,9 +32,10 @@ about 22 A to about 1 A. The aircraft dropped almost freely for 1.6 s and hit at
   load, to about 97% output with large cyclic swings. The autopilot needed
   **1.6× hover thrust** just to hold height.
 - The detector tripped at 308.93 s and cut Pitch P, but by then the airframe was
-  yielding. Vibration above 15 Hz rose 2–7× in the last 250 ms. Yaw, roll and
-  pitch all drifted the way a failing rear-right motor pushes them. Then the
-  structure broke.
+  at its limit. In the last half-second the autopilot commanded 1.6× hover thrust
+  for no extra lift. In the last 0.25–0.3 s vibration left its normal range on
+  both IMUs. Then the structure broke. See
+  [How early were there signs?](#how-early-were-there-signs)
 
 **Why it got that far.**
 
@@ -67,10 +68,10 @@ path to the ESCs, or at ESC resets. The log alone cannot say which (see
 | 296.5 – 308.9 | Pitch P (+I) ramp from 0.25 to 0.63 |
 | ≈ 300 | Roll rocking starts (about 1 Hz, ±5°). Roll rate-tracking error 5–8× higher; current bursts to 19 A |
 | 304.5 – 309 | Pilot eases throttle from 1509 to 1420 µs. That requests at most 0.18 m/s of descent, a negligible effect |
-| 308.65 | Yaw starts drifting clockwise against a growing counter-yaw demand |
+| 308.65 | Yaw starts drifting clockwise against a growing counter-yaw demand (four similar excursions happened earlier, so not diagnostic alone) |
 | 308.93 | Pitch P oscillation detected (SRate 4.01 > `QWIK_OSC_SMAX` 4). Pitch P and I slewed down to 0.25 over 0.5 s |
-| 309.0 – 309.5 | Commanded thrust 1.6× hover for about 1.0 g of lift. M4 at 1850–1940 µs. Current 19 → 23 A |
-| 309.25 | Vibration above 15 Hz starts rising: the structure is yielding |
+| 309.0 – 309.5 | Commanded thrust 1.6× hover for about 1.0 g of lift. M4 at 1780–1920 µs. Current 19 → 23 A |
+| 309.20 – 309.25 | Vibration leaves its normal range on both IMUs: the first unambiguous sign of the structure yielding |
 | **309.50** | **Structural shock: 60 ms, ±15 m/s² on all axes. The failure** |
 | ≈ 309.55 | Current collapses from about 22 A to about 1 A. Lift goes to about 0 g (free fall). Motor commands stay high |
 | 309.63 | QuickTune aborts on a 10.5° attitude error and restores the original gains. No effect, because there is no thrust |
@@ -119,8 +120,9 @@ gains were reverted, so flight 2 started from the defaults.
 
 ![Final Pitch P ramp](figures/fig2_final_pitch_ramp.png)
 
-- **M4 driven to its limit.** It ran at 1850–1940 µs against a `Q_M_SPIN_MAX`
-  output limit of 1950 µs, with large cyclic swings from the oscillation.
+- **M4 driven to its limit.** It ran at 1780–1920 µs (1924 µs peak) against a
+  `Q_M_SPIN_MAX` output limit of 1950 µs, with large cyclic swings from the
+  oscillation.
 - **A thrust deficit.** Commanded collective as a multiple of hover:
 
   | Window (s) | Commanded | Lift | Efficiency |
@@ -136,27 +138,52 @@ gains were reverted, so flight 2 started from the defaults.
   thrust is convex in RPM, so it pushes the other way. A motor whose thrust line
   has started to tilt on a yielding mount can. From 196 to 296 s this efficiency
   held at 0.95–1.08.
-- **Directional drift.** From 308.65 s the aircraft yawed clockwise faster and
-  faster (0 → 19 deg/s by 309.49 s) against a counter-yaw demand growing to
-  −27 deg/s. At the same time it rolled right (1.5° → 9.8°) and pitched nose-up
-  (1.4° → 5.3°) against the controller. Losing effectiveness at **M4, the
-  rear-right, clockwise-spinning motor**, pushes the aircraft in exactly those
-  three directions:
-  - less right-side lift rolls it right;
-  - less rear lift pitches it nose-up;
-  - less reaction torque from a CW prop yaws it clockwise.
-
-  No motor-limit flags were logged before the break, so this was not the mixer
-  simply running out of authority.
+- **Directional drift, consistent but not diagnostic.** From 308.65 s the aircraft
+  yawed clockwise faster and faster (0 → 19 deg/s by 309.49 s) against a
+  counter-yaw demand growing to −27 deg/s. It also rolled right and pitched
+  nose-up against the controller. Losing effectiveness at **M4, the rear-right,
+  clockwise-spinning motor**, pushes the aircraft in exactly those three
+  directions. But the weak yaw loop produced four similar yaw excursions during
+  the Pitch D stage (277.9, 284.6, 289.0 and 294.1 s), with larger yaw rates
+  (22.9 deg/s) and no failure. On its own this drift is not a warning sign.
 - **A vibration precursor.** Accelerometer vibration above 15 Hz stayed at its
   baseline (0.30 m/s² RMS) for the whole tune. It rose to 0.56–0.83 m/s² at
   309.25–309.40 s, reached 2.2 m/s² at 309.45 s, and hit 10 m/s² at the break.
 
 **Reading.** The mount was not rattling loose over minutes. It yielded under peak
 load in about the last 0.3 s and then broke. You report a catastrophic motor-mount
-failure, and everything in the log points at **M4 (rear-right, `SERVO6`)**.
-Please confirm that is the mount that failed. If it was another corner, the drift
-analysis above needs revisiting.
+failure. The log can't directly identify which mount broke, but **M4 (rear-right,
+`SERVO6`)** is the prime suspect: it carried by far the most load and was near full
+output when the structure let go. Please confirm which mount failed.
+
+### How early were there signs?
+
+Lead times are measured back from the break at 309.50 s. Each onset is where the
+signal left the range it held during the earlier part of the Pitch P ramp
+(296–307.5 s, rocking included) and stayed out until the break.
+
+| Before the break | Signal | Is it a sign of the mount failing? |
+|---:|---|---|
+| ~9.5 s (300 s) | Visible roll rocking; current bursts to 19 A | No. It is the warning that the tune was overloading the airframe, and the actionable one. A 5° `QWIK_ANGLE_MAX` would have reverted the tune at 303.3 s |
+| ~1 s (308.5 s) | Thrust efficiency starts sliding (0.91 → 0.83 → 0.76) | Not yet. Dips to 0.74 had already happened during the rocking at 300 s |
+| ~0.85 s (308.65 s) | Clockwise yaw drift against demand | No, on its own. Four similar excursions happened earlier |
+| ~0.25–0.5 s | Thrust efficiency falls below anything earlier in the flight (0.69, then 0.63) | Strongly suggestive: 1.6× hover commanded for no extra lift |
+| **0.25–0.30 s (309.20–309.25 s)** | **Vibration leaves its normal range on both IMUs.** ArduPilot's VIBE X and Z, and the >15 Hz band on roll/pitch gyro and X accelerometer; Y follows 0.05–0.1 s later | **Yes. The first unambiguous mechanical sign** |
+| 0 (309.50 s) | 60 ms structural shock | The break |
+
+**No earlier trend.** Across both flights these were all steady until the final
+second:
+
+- vibration levels;
+- the frequency of the airframe's 22 Hz roll mode (22.0, 21.8, 21.9 Hz), which a
+  softening mount would pull down;
+- the hover trims and motor balance.
+
+So there was no minutes-long or flight-to-flight warning *in this log*. What it
+can't show is damage that doesn't change in flight: a crack, or a mount already
+twisted before take-off. The large constant yaw trim seen from the first hover is
+consistent with a twisted motor or boom. If older logs show that trim growing
+flight by flight, that would be the longer-term warning.
 
 ### 3. The tune that led there
 
