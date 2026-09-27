@@ -272,6 +272,18 @@ flight by flight, that would be the longer-term warning.
 - It aborts when tilt error exceeds `QWIK_ANGLE_MAX` and restores every original
   gain. Here that happened at 309.63 s, after the failure: a consequence, not a
   warning.
+- **Why the 10° limit didn't trip earlier.** It limits the *error* between the
+  tilt the controller wants and the tilt the aircraft has, not the roll or pitch
+  angle itself.
+  - The aircraft never reached 10° of roll or pitch before the failure. Roll peaked
+    at 9.6° (6.3° of it demanded) and pitch at 4.8°. Roll only passed 10° at
+    309.51 s, after the break had begun.
+  - The error peaked at 5.6° during the rocking at 303.3 s.
+  - The oscillation that did the damage was fast. At 5–6 Hz, pitch rate swung
+    ±14 deg/s but the attitude moved only ±0.4°. It shook the airframe and cycled
+    M4 hard with almost no change in angle. An angle limit can't catch that; the
+    slew-rate detector (`QWIK_OSC_SMAX`) has to. The angle limit is a backstop for
+    slow, large swings like the rocking.
 - The tune was never saved, so the parameter file on the FC still holds the
   defaults.
 

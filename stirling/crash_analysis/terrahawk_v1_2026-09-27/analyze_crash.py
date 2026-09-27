@@ -21,7 +21,7 @@ import numpy as np
 from scipy import signal
 
 G = 9.80665
-MSGS = ['PARM', 'MSG', 'QWIK', 'RATE', 'ATT', 'IMU', 'RCOU', 'RCIN', 'BAT',
+MSGS = ['PARM', 'MSG', 'QWIK', 'RATE', 'ATT', 'ANG', 'IMU', 'RCOU', 'RCIN', 'BAT',
         'QTUN', 'MOTB', 'PIQR', 'PIQP', 'PIQY', 'VIBE', 'MCU', 'ARSP', 'PSCD', 'XKF1', 'STAT']
 # QUAD/X output mapping on this airframe: SERVO5=M1, SERVO4=M2, SERVO3=M3, SERVO6=M4
 MOTORS = [('M1', 'C5', 'front-right, CCW'), ('M2', 'C4', 'rear-left, CCW'),
@@ -500,6 +500,40 @@ def weathervane(L, R):
               f'{np.sqrt(floor):.1f} m/s ground reading) explain {wind:+.3f} = {100 * wind / y.mean():.0f}% of it')
 
 
+def angle_limit(L, R):
+    """Why QWIK_ANGLE_MAX never tripped before the break: it limits attitude error, not roll or pitch."""
+    lim, brk = L.P['QWIK_ANGLE_MAX'], R['shock1']
+    g, tg = L.D['ANG'], L.t('ANG')
+    m = (tg >= R['stages'][0]['t0']) & (tg < brk)
+    i, j = np.argmax(np.abs(g['Roll'][m])), np.argmax(np.abs(g['Pitch'][m]))
+    print(f'\nQWIK_ANGLE_MAX = {lim:g} deg (limits tilt error from the target, not roll or pitch)')
+    print(f'  before the break: max |roll| {abs(g["Roll"][m][i]):.1f} deg at {tg[m][i]:.2f} s '
+          f'(demanded {g["DesRoll"][m][i]:.1f}); max |pitch| {abs(g["Pitch"][m][j]):.1f} deg (demanded {g["DesPitch"][m][j]:.1f})')
+    k = (tg >= R['stages'][0]['t0']) & (np.abs(g['Roll']) > lim)
+    print(f'  roll first beyond {lim:g} deg at {tg[k][0]:.3f} s ({tg[k][0] - brk:+.3f} s from the break)')
+    # tilt error: angle between the demanded and actual thrust (body z) axes
+    def zaxis(roll, pitch):
+        r_, p_ = np.radians(roll), np.radians(pitch)
+        return np.stack([np.cos(r_) * np.sin(p_), -np.sin(r_), np.cos(r_) * np.cos(p_)])
+    mm = (tg >= R['stages'][0]['t0']) & (tg < R['abort'] + 0.05)
+    err = np.degrees(np.arccos(np.clip((zaxis(g['Roll'][mm], g['Pitch'][mm]) *
+                                        zaxis(g['DesRoll'][mm], g['DesPitch'][mm])).sum(0), -1, 1)))
+    t = tg[mm]
+    pre = t < brk
+    over = np.where(err > lim)[0]
+    print(f'  tilt error before the break: max {err[pre].max():.1f} deg at {t[pre][np.argmax(err[pre])]:.2f} s; '
+          f'first beyond {lim:g} deg at {t[over[0]]:.2f} s ({t[over[0]] - brk:+.2f} s from the break)')
+    # a fast oscillation is violent in rate but tiny in angle
+    r, tr = L.D['RATE'], L.t('RATE')
+    mr = (tr >= brk - 5) & (tr < brk)
+    b, a = signal.butter(3, [4, 8], btype='band', fs=300)
+    rate = signal.filtfilt(b, a, r['P'][mr])
+    ang = signal.filtfilt(b, a, np.interp(tr[mr], tg, g['Pitch']))
+    k = tr[mr] >= brk - 0.9
+    print(f'  final 5-6 Hz pitch oscillation: rate swing +/-{np.abs(rate[k]).max():.0f} deg/s, '
+          f'attitude swing only +/-{np.abs(ang[k]).max():.1f} deg')
+
+
 # ----------------------------------------------------------------------------
 # Figures
 # ----------------------------------------------------------------------------
@@ -820,6 +854,7 @@ def main():
     precursors(L, R)
     causality(L, R)
     weathervane(L, R)
+    angle_limit(L, R)
     os.makedirs(args.out, exist_ok=True)
     fig_overview(L, R, args.out)
     fig_last_seconds(L, R, args.out)
