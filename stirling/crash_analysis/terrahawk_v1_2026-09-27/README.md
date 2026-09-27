@@ -319,6 +319,22 @@ flight by flight, that would be the longer-term warning.
     pair. A degree or two of motor or boom tilt is enough to cause this. So are
     mismatched props or motors between the two spin directions. The elevons sat at
     neutral, so they weren't the cause.
+  - *Not mainly weathervaning.* Wind torque grows with wind speed squared and changes
+    with heading. This torque behaved like a thrust effect instead:
+    - It appeared at full strength the moment each flight lifted off, within a metre
+      of the ground where wind is weakest. The nose swung 26° and 12° clockwise
+      within 4 s, from take-off headings 34° apart.
+    - It stayed the same from 1–3 m (−0.13) to 9–12 m (−0.11), although wind is
+      usually stronger higher up.
+    - It was the same in both flights, at headings 34° and 43°.
+    - Gusts measured by the airspeed sensor explain only 8–10% of it.
+
+    The airspeed sensor only sees wind along the nose, so a steady crosswind would be
+    invisible to it. But to explain the lift-off and height results, that crosswind
+    would have to be as strong at half a metre as at 11 m. The automatic weathervane
+    feature was effectively off (`Q_WVANE_GAIN` = 0), so heading was held fixed.
+    To settle it, hover in a steady breeze and do a slow 360° yaw turn. A wind torque
+    changes size and sign with heading; a mechanical one stays constant.
 - **Why it matters.** M4 had the least headroom and carried the biggest steady and
   cyclic loads, which makes it the obvious corner to fail first.
 - **It isn't something that developed during the tune.** It was already there at

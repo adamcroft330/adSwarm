@@ -22,7 +22,7 @@ from scipy import signal
 
 G = 9.80665
 MSGS = ['PARM', 'MSG', 'QWIK', 'RATE', 'ATT', 'IMU', 'RCOU', 'RCIN', 'BAT',
-        'QTUN', 'MOTB', 'PIQR', 'PIQP', 'PIQY', 'VIBE', 'MCU', 'ARSP', 'PSCD', 'XKF1']
+        'QTUN', 'MOTB', 'PIQR', 'PIQP', 'PIQY', 'VIBE', 'MCU', 'ARSP', 'PSCD', 'XKF1', 'STAT']
 # QUAD/X output mapping on this airframe: SERVO5=M1, SERVO4=M2, SERVO3=M3, SERVO6=M4
 MOTORS = [('M1', 'C5', 'front-right, CCW'), ('M2', 'C4', 'rear-left, CCW'),
           ('M3', 'C3', 'front-left, CW'), ('M4', 'C6', 'rear-right, CW')]
@@ -456,6 +456,50 @@ def causality(L, R):
     R['causal'] = C
 
 
+def weathervane(L, R):
+    """Could weathervaning explain the yaw trim? Wind torque scales with wind^2 and heading; tilt scales with thrust."""
+    r, tr, q, tq = L.D['RATE'], L.t('RATE'), L.D['QTUN'], L.t('QTUN')
+    s, ts = L.D['ARSP'], L.t('ARSP')
+    m0 = s['I'] == 0
+    tsa, V = ts[m0], s['Airspeed'][m0]
+    att, ta = L.D['ATT'], L.t('ATT')
+    st, tst = L.D['STAT'], L.t('STAT')
+    print('\nWeathervaning check (yaw output < 0 = counter-clockwise correction)')
+    arms = [t for t, x in L.texts if x == 'Throttle armed']
+    liftoffs = {}
+    for arm in arms:
+        k = (tst > arm) & (tst < arm + 15) & (st['isFlying'] == 1)
+        if k.any():
+            liftoffs.setdefault(round(float(tst[k][0]), 1), arm)   # one entry per lift-off
+    for tl, arm in sorted(liftoffs.items()):
+        arm = max(a for a in arms if a < tl)                      # the arming that led to this lift-off
+        h0 = L.at('ATT', 'Yaw', arm + 0.5)
+        k = (ta > tl) & (ta < tl + 4)
+        swing = ((att['Yaw'][k] - h0 + 180) % 360 - 180).max()
+        mr = (tr > tl + 2) & (tr < tl + 4)
+        print(f'  lift-off {tl:6.1f} s at heading {h0:5.1f} deg: nose swung up to {swing:4.1f} deg clockwise in 4 s, '
+              f'yaw output {r["YOut"][mr].mean():+.3f} within 2-4 s')
+    alt0 = R['alt0']
+    bands = []
+    for lo, hi in ((1, 3), (9, 12)):
+        mq = (tq > 205) & (tq < R['stages'][-1]['t0']) & (q['Alt'] - alt0 >= lo) & (q['Alt'] - alt0 < hi)
+        bands.append(f'{lo}-{hi} m {np.mean(np.interp(tq[mq], tr, r["YOut"])):+.3f}')
+    print('  yaw output by height (flight 2): ' + ', '.join(bands))
+    for lab, (a0, a1) in (('flight 1', (75, 104)), ('flight 2', (215, R['stages'][-1]['t0']))):
+        k = (ta >= a0) & (ta < a1)
+        hd = np.degrees(np.angle(np.mean(np.exp(1j * np.radians(att['Yaw'][k]))))) % 360
+        rows = []
+        for t0 in np.arange(a0, a1, 1.0):
+            mr = (tr >= t0) & (tr < t0 + 1); mq = (tq >= t0) & (tq < t0 + 1); ms = (tsa >= t0) & (tsa < t0 + 1)
+            rows.append((r['YOut'][mr].mean(), np.mean(V[ms] ** 2), q['ThO'][mq].mean() / q['ThH'][mq].mean()))
+        y, v2, thr = np.array(rows).T
+        coef = np.linalg.lstsq(np.column_stack([np.ones_like(y), v2, thr]), y, rcond=None)[0]
+        floor = np.mean(V[(tsa > R['impact'] + 10) & (tsa < R['disarm_final'])] ** 2)   # on the ground, no thrust
+        wind = coef[1] * (v2.mean() - floor)
+        print(f'  {lab}: heading {hd:5.1f} deg, mean yaw output {y.mean():+.3f}; gusts (pitot, above its '
+              f'{np.sqrt(floor):.1f} m/s ground reading) explain {wind:+.3f} = {100 * wind / y.mean():.0f}% of it')
+
+
 # ----------------------------------------------------------------------------
 # Figures
 # ----------------------------------------------------------------------------
@@ -775,6 +819,7 @@ def main():
     summary(L, R)
     precursors(L, R)
     causality(L, R)
+    weathervane(L, R)
     os.makedirs(args.out, exist_ok=True)
     fig_overview(L, R, args.out)
     fig_last_seconds(L, R, args.out)
