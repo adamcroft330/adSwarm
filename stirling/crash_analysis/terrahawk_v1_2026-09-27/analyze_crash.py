@@ -375,6 +375,80 @@ def precursors(L, R):
     print(f'  M4 highest command before the break: {o["C6"][mo].max()} us')
 
 
+def causality(L, R):
+    """Did the tune's oscillation break the mount, or did a failing mount cause the oscillation?
+
+    Everything here uses causal (past-data-only) filters and trailing windows, so no filter can
+    move a later effect earlier in time. Filter delay only makes the oscillation look later.
+    """
+    brk, fs = R['shock1'], 300
+    r, tr = L.D['RATE'], L.t('RATE')
+    t0 = R['stages'][-1]['t0'] - 2.0
+    m = (tr >= t0 - 5) & (tr < brk)
+    t = tr[m]
+    b48, a48 = signal.butter(3, [4, 8], btype='band', fs=fs)
+    b12, a12 = signal.butter(3, [1, 2.5], btype='band', fs=fs)
+    pitch = signal.lfilter(b48, a48, r['P'][m] - r['PDes'][m])
+    roll = signal.lfilter(b12, a12, r['R'][m] - r['RDes'][m])
+    im, ti = L.D['IMU'], L.t('IMU')
+    mi = (im['I'] == 0) & (ti >= t0 - 5) & (ti < brk)
+    tv = ti[mi]
+    bh, ah = signal.butter(4, 15, btype='high', fs=fs)
+    vib = np.sqrt(sum(signal.lfilter(bh, ah, im[k][mi]) ** 2 for k in ('AccX', 'AccY', 'AccZ')))
+
+    def trailing_rms(tt, x, ends, width):
+        return np.array([np.sqrt((x[(tt > e - width) & (tt <= e)] ** 2).mean()) for e in ends])
+    ends = np.arange(t0, brk + 1e-9, 0.05)
+    C = dict(ends=ends, pitch=trailing_rms(t, pitch, ends, 0.4), roll=trailing_rms(t, roll, ends, 0.4),
+             vib=trailing_rms(tv, vib, ends, 0.1))
+    base = (ends >= R['stages'][-1]['t0']) & (ends < 307.5)
+    C['vib_thr'] = float(np.percentile(C['vib'][base], 99.9))
+
+    # thrust efficiency over trailing 0.5 s windows (mean of both EKF cores)
+    x, tx, q, tq = L.D['XKF1'], L.t('XKF1'), L.D['QTUN'], L.t('QTUN')
+    effs = []
+    for e in ends:
+        mq = (tq > e - 0.5) & (tq <= e)
+        cmd = q['ThO'][mq].mean() / q['ThH'][mq].mean()
+        lift = np.mean([1 - np.polyfit(tx[(tx > e - 0.5) & (tx <= e) & (x['C'] == c)],
+                                       x['VD'][(tx > e - 0.5) & (tx <= e) & (x['C'] == c)], 1)[0] / G for c in (0, 1)])
+        effs.append(lift / cmd)
+    C['eff'] = np.array(effs)
+    C['eff_prev_min'] = float(C['eff'][base].min())
+
+    print('\nWhich came first? (causal filters, trailing windows)')
+    q_, tq_ = L.D['QWIK'], L.t('QWIK')
+    for a0, a1 in ((296.5, 299), (299, 301.5), (301.5, 304), (304, 306.5), (306.5, 308.5), (308.5, 309.0),
+                   (309.0, 309.25), (309.25, brk)):
+        k = (ends > a0) & (ends <= a1)
+        mp = (q_['Param'] == 'Pitch P') & (tq_ >= a0) & (tq_ < a1)
+        gain = f'{q_["Gain"][mp].min():.2f}-{q_["Gain"][mp].max():.2f}' if mp.any() else 'cut  '
+        mo = (L.t('RCOU') >= a0) & (L.t('RCOU') < a1)
+        print(f'  {a0:6.2f}-{a1:6.2f}  Pitch P {gain:>9}  pitch 4-8 Hz {C["pitch"][k].max():5.2f}  '
+              f'roll 1-2.5 Hz {C["roll"][k].max():5.2f}  M4 max {L.D["RCOU"]["C6"][mo].max():4d} us  '
+              f'vib>15Hz {C["vib"][k].max():4.2f} (normal <= {C["vib_thr"]:.2f})  eff min {C["eff"][k].min():.2f}')
+    ipk = int(np.argmax(np.where(ends > R['stages'][-1]['t_trip'] - 0.5, C['pitch'], 0)))
+    von = next(e for e, v in zip(ends[::-1], C['vib'][::-1]) if v <= C['vib_thr']) + 0.05
+    print(f'  pitch oscillation peak: 0.4 s window centred on {ends[ipk] - 0.2:.2f} s ({C["pitch"][ipk]:.1f} deg/s), '
+          f'{C["pitch"][-1]:.1f} at the break')
+    print(f'  vibration leaves its normal range: 0.1 s window centred on {von - 0.05:.2f} s '
+          f'({brk - (von - 0.05):.2f} s before the break)')
+    # Is the final pitch oscillation the same mode that grew through the ramp? (per gain range)
+    print('  pitch 4-8 Hz mode by Pitch P range (zero-phase within each window):')
+    for a0, a1 in ((296.5, 299), (299, 301.5), (301.5, 304), (304, 306.5), (306.5, 308.5),
+                   (308.5, R['stages'][-1]['t_trip'])):
+        mm = (tr >= a0) & (tr < a1)
+        e = r['P'][mm] - r['PDes'][mm]
+        e = e - e.mean()
+        f, pxx = signal.periodogram(e * np.hanning(len(e)), fs=fs, nfft=8192, scaling='spectrum')
+        band = (f >= 4) & (f <= 8)
+        amp = np.sqrt((signal.filtfilt(b48, a48, e) ** 2)[30:-30].mean())
+        mp = (q_['Param'] == 'Pitch P') & (tq_ >= a0) & (tq_ < a1)
+        print(f'    P {q_["Gain"][mp].min():.2f}-{q_["Gain"][mp].max():.2f}: peak {f[band][np.argmax(pxx[band])]:.1f} Hz, '
+              f'{amp:.2f} deg/s RMS')
+    R['causal'] = C
+
+
 # ----------------------------------------------------------------------------
 # Figures
 # ----------------------------------------------------------------------------
@@ -619,6 +693,71 @@ def fig_imbalance(L, R, out):
     plt.close(fig)
 
 
+def fig_causality(L, R, out):
+    plt = style()
+    C = R['causal']
+    ends, brk = C['ends'], R['shock1']
+    t0, t1 = R['stages'][-1]['t0'] - 1.5, brk + 0.12
+    fig, axs = plt.subplots(5, 1, figsize=(12, 12), sharex=True,
+                            gridspec_kw=dict(height_ratios=[0.8, 1.1, 1.0, 0.9, 0.9]))
+    fig.suptitle('Which came first? The oscillation built for ~10 s before any mechanical sign appeared',
+                 x=0.01, ha='left', fontsize=12.5, fontweight='bold')
+    trip = R['stages'][-1]['t_trip']
+    for ax in axs:
+        ax.axvspan(R['stages'][-1]['t0'], brk - 0.3, color='#efeee9', lw=0, zorder=0)
+        ax.axvspan(brk - 0.3, brk, color='#f7e4dc', lw=0, zorder=0)
+    axs[0].text((R['stages'][-1]['t0'] + brk - 0.3) / 2, 0.93, 'oscillating, vibration normal',
+                transform=axs[0].get_xaxis_transform(), ha='center', va='top', fontsize=8, color=INK2)
+    # a) gain
+    ax = axs[0]
+    s_ = R['stages'][-1]
+    ax.plot(s_['t'], s_['g'], color=VIOLET, lw=1.6)
+    ax.set_ylabel('Pitch P\nunder test'); ax.set_ylim(0.2, 0.72)
+    ax.set_title('a  QuickTune ramps Pitch P (and I); it trips at 308.93 s and cuts the gain', fontsize=9.5)
+    # b) oscillation amplitude
+    ax = axs[1]
+    k = ends >= t0
+    ax.plot(ends[k], C['pitch'][k], color=VIOLET, label='pitch 4-8 Hz oscillation')
+    ax.plot(ends[k], C['roll'][k], color=BLUE, label='roll 1-2.5 Hz rocking')
+    ax.set_ylabel('Oscillation\n(deg/s RMS, 0.4 s)')
+    ax.legend(loc='upper left', ncol=2)
+    ax.set_title('b  Oscillation grows with the gain; the pitch mode peaks and starts to shrink once the gain is cut',
+                 fontsize=9.5)
+    # c) M4 load
+    ax = axs[2]
+    to = L.t('RCOU'); mo = (to >= t0) & (to < brk)
+    ax.plot(to[mo], L.D['RCOU']['C6'][mo], color=ORANGE, lw=1.6)
+    ax.axhline(L.P['Q_M_PWM_MIN'] + L.P['Q_M_SPIN_MAX'] * (L.P['Q_M_PWM_MAX'] - L.P['Q_M_PWM_MIN']),
+               color=INK2, lw=0.8)
+    ax.text(t0 + 0.1, 1955, 'max output', fontsize=7.5, color=INK2, va='bottom')
+    ax.set_ylim(1500, 2000); ax.set_ylabel('M4 command\n(PWM us)')
+    ax.set_title('c  Load on M4 (rear-right) cycles harder and climbs to its flight maximum at the break', fontsize=9.5)
+    # d) vibration
+    ax = axs[3]
+    ax.plot(ends[k], C['vib'][k], color=INK, lw=1.2)
+    ax.axhline(C['vib_thr'], color=MUTED, lw=0.8)
+    ax.text(t0 + 0.1, C['vib_thr'] * 1.05, 'normal range (99.9th pct)', fontsize=7.5, color=INK2, va='bottom')
+    ax.set_ylim(0, 1.0); ax.set_ylabel('Vibration >15 Hz\n(m/s^2 RMS, 0.1 s)')
+    ax.set_title('d  Structural vibration stays in its normal range until the last ~0.25 s', fontsize=9.5)
+    # e) efficiency
+    ax = axs[4]
+    ax.plot(ends[k], C['eff'][k], color=INK, lw=1.2)
+    ax.axhline(C['eff_prev_min'], color=MUTED, lw=0.8)
+    ax.text(t0 + 0.1, C['eff_prev_min'] - 0.03, 'lowest earlier in the ramp', fontsize=7.5, color=INK2, va='top')
+    ax.set_ylim(0.5, 1.2); ax.set_ylabel('Lift / commanded\n(0.5 s)')
+    ax.set_xlabel('Time since boot (s)')
+    ax.set_title('e  Lift per unit of commanded thrust: dips during rocking recover; the final slide does not',
+                 fontsize=9.5)
+    mark(axs, [(trip, 'P trip'), (brk, 'break')])
+    axs[-1].set_xlim(t0, t1)
+    fig.text(0.01, 0.005, 'Causal filters and trailing windows, plotted at the window end: each point uses only '
+             'past data.\nThis delays the oscillation curve (~0.25 s) more than the vibration curve (~0.05 s), so '
+             'the plot understates how early the oscillation came.', fontsize=7.5, color=INK2, ha='left', va='bottom')
+    fig.tight_layout(rect=(0, 0.025, 1, 0.975))
+    fig.savefig(os.path.join(out, 'fig5_which_came_first.png'), dpi=150)
+    plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('log', help='DataFlash .BIN log')
@@ -628,11 +767,13 @@ def main():
     R = analyse(L)
     summary(L, R)
     precursors(L, R)
+    causality(L, R)
     os.makedirs(args.out, exist_ok=True)
     fig_overview(L, R, args.out)
     fig_last_seconds(L, R, args.out)
     fig_failure(L, R, args.out)
     fig_imbalance(L, R, args.out)
+    fig_causality(L, R, args.out)
     print(f'\nFigures written to {args.out}')
 
 

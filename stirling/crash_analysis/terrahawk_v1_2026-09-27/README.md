@@ -13,7 +13,9 @@ reproduced by [`analyze_crash.py`](analyze_crash.py) (see
 > The failure also cut drive to all four lift motors, so the aircraft fell about
 > 10.5 m. The tune got that far because the vehicle wasn't set up the way
 > QuickTune assumes: no harmonic notch, a 2:1 built-in thrust imbalance, tuning at
-> about 11 m, and a 10° abort threshold that the oscillation never reached.
+> about 11 m, and a 10° abort threshold that the oscillation never reached. The
+> oscillation came first and the mount failure followed; see
+> [Which came first](#which-came-first-the-oscillation-or-the-mount-failure).
 
 **What brought it down.** At **309.50 s**, about 10.5 m up, there was a structural
 failure, and within about 50 ms it cut drive to **all four lift motors**. The FC
@@ -55,6 +57,45 @@ about 22 A to about 1 A. The aircraft dropped almost freely for 1.6 s and hit at
 lost on all four motors, not just M4. That points at the shared power or signal
 path to the ESCs, or at ESC resets. The log alone cannot say which (see
 [Inspect](#what-the-log-cannot-tell-you--inspect-these)).
+
+## Which came first: the oscillation or the mount failure?
+
+**The oscillation.** QuickTune's gain ramp induced the oscillation, and the oscillation
+broke the mount, not the other way round. The oscillation built for about 10 s with the
+airframe showing no mechanical distress. The mount only began to fail in the last
+~0.25 s, at the highest load of the flight, after the oscillation had already peaked.
+
+![Which came first](figures/fig5_which_came_first.png)
+
+The two explanations predict different things, and the log matches only one of them:
+
+| Test | A failing mount causing the oscillation predicts | The tune's oscillation breaking the mount predicts | The log shows |
+|---|---|---|---|
+| Order | Mechanical signs first, or together with the oscillation | Oscillation first, mechanical signs at the end | Oscillation from ~299 s. Vibration normal until ~309.25 s. Trims, motor balance and the 22 Hz structural mode unchanged throughout |
+| Link to the gain | Oscillation unrelated to the gain being ramped | Oscillation growing with the gain | The 4–6 Hz pitch oscillation grew with Pitch P: 0.14 deg/s at P ≤ 0.30, about 1.0–1.2 at 0.30–0.61, 4.0 at 0.61–0.63. QuickTune's own detector tripped on it at 308.93 s |
+| Gain cut | Oscillation unaffected | Oscillation shrinking | After the trip the pitch oscillation peaked (about 309.0–309.1 s) and was 20–40% down by the break. Meanwhile the mechanical signs kept growing |
+| Recovery | A failing mount doesn't heal | Transient dips during bursts | Lift efficiency dipped to 0.72–0.80 during the roll-rocking bursts at 300–302 s, then returned to about 1.0 (303–308 s). Only the final slide didn't recover |
+| Load at failure | Failure at any load | Failure at peak load | M4 reached its flight-maximum command (1924 µs) at the break, after swings of up to 130 µs on top of a load already about 2× M1's |
+
+**Put together.** The Pitch P (and I) ramp pushed a closed-loop pitch mode towards
+instability, and QuickTune's trip confirms the gain had reached the limit. The resulting
+oscillation cycled the rear-right motor, already the most loaded corner, at up to about
+97% output. Its mount started to yield about 0.25 s before it broke.
+
+**What this doesn't rule out.** The log can't see a pre-existing crack, or a mount
+weakened on earlier flights or by the ~10 s of rocking. Look at the fracture surface. A
+single clean overload break means the final loads alone did it. Fatigue beach marks mean
+the mount was already being worn down, and the tune's oscillation delivered the final
+loads. Either way the trigger was the tune-induced oscillation. A weak or damaged mount,
+plus M4's built-in 2× load, is why that corner was the one that failed.
+
+**Two limits on the fine timing.**
+- In the final second, the lift shortfall (from about 308.3 s) and the sharp growth of the
+  pitch oscillation (from about 308.5 s) start within a few tenths of a second of each
+  other. At that scale the log can't say which led. It can say both came about 9 s after
+  the oscillation began, following a long stretch with no mechanical signs.
+- Why roll rocked from about 300 s, when roll wasn't being tuned, is not fully explained.
+  It carried no mechanical signature either.
 
 ## Timeline (flight 2)
 
