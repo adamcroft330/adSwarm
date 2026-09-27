@@ -292,10 +292,35 @@ flight by flight, that would be the longer-term warning.
   | M4 | 134% | 131% |
   | **M4 / M1** | **2.0** | **1.8** |
 
-- **What it means.** The CG is aft of the VTOL thrust centre. A yaw trim that large
-  usually means tilted or twisted motor mounts or booms, or mismatched props or
-  motors. M4 had the least headroom and carried the biggest loads, which makes it
-  the obvious candidate to fail first.
+- **The two trims account for the whole spread.** Add the mixer's share of each
+  trim to the four-motor mean, and you reproduce every motor's commanded thrust to
+  within 0.001, in all three periods checked.
+
+  | Motor | Position, spin | From pitch trim | From yaw trim | Net |
+  |---|---|---:|---:|---:|
+  | M1 | front-right, CCW | −0.04 | −0.06 | **−0.10** |
+  | M2 | rear-left, CCW | +0.04 | −0.06 | −0.02 |
+  | M3 | front-left, CW | −0.04 | +0.06 | +0.02 |
+  | M4 | rear-right, CW | +0.04 | +0.06 | **+0.10** |
+
+  (Thrust fractions, flight 2 before tuning; mean about 0.31. Roll trim adds only
+  ±0.002.) M4 is the only motor that is both at the rear and clockwise, so it gets
+  both increments. M1, at the front and counter-clockwise, gets both decrements.
+- **It isn't a weak M4.** One weak motor would show up as roll, pitch and yaw trims
+  of equal size. The roll trim was essentially zero, and the left/right thrust split
+  was 0.97–0.99.
+- **What causes each trim.**
+  - *Pitch:* the rear pair carried about 56% of the weight. If only the CG is
+    responsible, it sits about 13% of the front-to-centre motor distance behind the
+    centre of the four lift motors: roughly 4 cm if those motors are 30 cm out.
+    Weaker rear props (for example, their wash hitting the wing) would look the same.
+  - *Yaw:* a steady clockwise torque. A quad can only push back with prop reaction
+    torque, which is weak, so it needs a big split: the CW pair ran 1.4–1.5× the CCW
+    pair. A degree or two of motor or boom tilt is enough to cause this. So are
+    mismatched props or motors between the two spin directions. The elevons sat at
+    neutral, so they weren't the cause.
+- **Why it matters.** M4 had the least headroom and carried the biggest steady and
+  cyclic loads, which makes it the obvious corner to fail first.
 - **It isn't something that developed during the tune.** It was already there at
   the start of flight 1, so it is a property of the build. It could also be
   pre-existing damage, such as a mount that was already twisted.

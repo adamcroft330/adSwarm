@@ -259,6 +259,13 @@ def summary(L, R):
         shares = '  '.join(f'{n} {100 * v / mean:4.0f}% ({h["pwm"][n]:.0f}us)' for n, v in h['thr'].items())
         print(f'  {label}: {shares}  | M4/M1 {h["thr"]["M4"] / h["thr"]["M1"]:.2f} | '
               f'trims ROut {h["ROut"]:+.3f} POut {h["POut"]:+.3f} YOut {h["YOut"]:+.3f}')
+        # QUAD/X mixer factors (normalised to 0.5): the trims should reproduce each motor's thrust
+        factors = {'M1': (-.5, .5, .5), 'M2': (.5, -.5, .5), 'M3': (.5, .5, -.5), 'M4': (-.5, -.5, -.5)}
+        parts = []
+        for n, (fr, fp, fy) in factors.items():
+            pred = mean + fr * h['ROut'] + fp * h['POut'] + fy * h['YOut']
+            parts.append(f'{n} pitch {fp * h["POut"]:+.3f} yaw {fy * h["YOut"]:+.3f} -> {pred:.3f} (obs {h["thr"][n]:.3f})')
+        print('    trims -> thrust: ' + '; '.join(parts))
 
     print('\nThrust efficiency = (lift/weight) / (commanded collective / hover)')
     for a0, a1, cmd, lift, eff, cur in R['eff']:
